@@ -5,6 +5,9 @@ import { calculateWorkoutDuration } from './workoutDuration';
 
 const MAX_WORKOUT_MINUTES = 70;
 
+/** True core/ab exercise = Core is the primary (first) muscle group */
+const isCoreExercise = (ex: ExerciseTemplate) => ex.muscle_groups[0] === 'Core';
+
 // ─── Exercise Templates ──────────────────────────────────────────────────────
 
 interface ExerciseTemplate {
@@ -409,11 +412,11 @@ function selectExercises(
     });
   }
 
-  // Guarantee at least one core / ab exercise in every session
-  const hasCore = selected.some((ex) => ex.muscle_groups.includes('Core'));
+  // Guarantee at least one dedicated core / ab exercise in every session
+  const hasCore = selected.some(isCoreExercise);
   if (!hasCore) {
     const corePool = eligible
-      .filter((ex) => ex.muscle_groups.includes('Core') && !used.has(ex.name))
+      .filter((ex) => isCoreExercise(ex) && !used.has(ex.name))
       .sort(() => 0.5 - Math.sin(rotationSeed + 99));
     if (corePool.length > 0) {
       selected.push(adjustForGoal(corePool[0], goal, experience));
@@ -445,12 +448,12 @@ function trimToMaxDuration(exercises: ExerciseTemplate[]): ExerciseTemplate[] {
     if (totalMinutes <= MAX_WORKOUT_MINUTES) break;
 
     // Find the last exercise that can be removed without losing all core exercises
-    const coreCount = trimmed.filter((e) => e.muscle_groups.includes('Core')).length;
+    const coreCount = trimmed.filter(isCoreExercise).length;
     let removeIdx = trimmed.length - 1;
     while (
       removeIdx > 0 &&
       coreCount <= 1 &&
-      trimmed[removeIdx].muscle_groups.includes('Core')
+      isCoreExercise(trimmed[removeIdx])
     ) {
       removeIdx--;
     }
