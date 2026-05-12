@@ -1,6 +1,9 @@
 import { addDays, format, startOfWeek } from 'date-fns';
 import { FitnessGoal, ExperienceLevel, WorkoutDay, WorkoutExercise, DayOfWeek } from '../types';
 import { PLAN_DURATION_WEEKS } from '../constants';
+import { calculateWorkoutDuration } from './workoutDuration';
+
+const MAX_WORKOUT_MINUTES = 60;
 
 // ─── Exercise Templates ──────────────────────────────────────────────────────
 
@@ -406,7 +409,29 @@ function selectExercises(
     });
   }
 
-  return selected;
+  return trimToMaxDuration(selected);
+}
+
+/** Remove exercises from the end until the workout fits within MAX_WORKOUT_MINUTES. */
+function trimToMaxDuration(exercises: ExerciseTemplate[]): ExerciseTemplate[] {
+  let trimmed = exercises;
+  while (trimmed.length > 1) {
+    const { totalMinutes } = calculateWorkoutDuration(
+      trimmed.map((e, i) => ({
+        id: '',
+        workout_day_id: '',
+        exercise_id: '',
+        sets: e.sets,
+        reps: e.reps,
+        rest_seconds: e.rest_seconds,
+        notes: null,
+        order_index: i,
+      })) as WorkoutExercise[],
+    );
+    if (totalMinutes <= MAX_WORKOUT_MINUTES) break;
+    trimmed = trimmed.slice(0, -1);
+  }
+  return trimmed;
 }
 
 function getExerciseCount(muscle: string, goal: FitnessGoal): number {
