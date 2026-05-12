@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { getWorkoutDayFallbackImage } from '../../src/hooks/useExerciseImage';
+import { calculateWorkoutDuration } from '../../src/utils/workoutDuration';
+import { useT } from '../../src/stores/languageStore';
 import { router } from 'expo-router';
 import { format, parseISO, differenceInWeeks } from 'date-fns';
 import { useAuthStore } from '../../src/stores/authStore';
@@ -30,6 +32,7 @@ export default function WorkoutScreen() {
   const sortedDays = [...workoutDays].sort((a, b) => a.order_index - b.order_index);
 
   const goalInfo = FITNESS_GOALS.find((g) => g.id === profile?.fitness_goal);
+  const t = useT();
 
   const handleGeneratePlan = async () => {
     if (!user || !profile?.fitness_goal || !profile?.experience_level) {
@@ -110,11 +113,11 @@ export default function WorkoutScreen() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.screenTitle}>Workout Plan</Text>
+          <Text style={styles.screenTitle}>{t.workoutPlan}</Text>
           <TouchableOpacity onPress={handleGeneratePlan} disabled={generating} style={styles.genBtn}>
             {generating
               ? <ActivityIndicator color={Colors.primary} size="small" />
-              : <Text style={styles.genBtnText}>+ New Plan</Text>
+              : <Text style={styles.genBtnText}>{t.newPlan}</Text>
             }
           </TouchableOpacity>
         </View>
@@ -148,16 +151,16 @@ export default function WorkoutScreen() {
         ) : (
           <Card style={styles.emptyPlanCard}>
             <Text style={styles.emptyIcon}>🏋️</Text>
-            <Text style={styles.emptyTitle}>No Active Plan</Text>
-            <Text style={styles.emptyDesc}>Generate your first personalized workout plan.</Text>
-            <Button title="Generate Plan" onPress={handleGeneratePlan} loading={generating} style={{ marginTop: Spacing.base }} />
+            <Text style={styles.emptyTitle}>{t.noActivePlan}</Text>
+            <Text style={styles.emptyDesc}>{t.noActivePlanDesc}</Text>
+            <Button title={t.generatePlan} onPress={handleGeneratePlan} loading={generating} style={{ marginTop: Spacing.base }} />
           </Card>
         )}
 
         {/* Workout Days */}
         {sortedDays.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Weekly Split</Text>
+            <Text style={styles.sectionTitle}>{t.weeklySchedule}</Text>
             {sortedDays.map((day) => {
               const exercises = (day as any).workout_exercises as WorkoutExercise[] ?? [];
               const completedToday = sessions.some(
@@ -165,6 +168,7 @@ export default function WorkoutScreen() {
                   new Date(s.completed_at).toDateString() === new Date().toDateString(),
               );
               const dayImage = getWorkoutDayFallbackImage(day.focus);
+              const { label: durLabel } = calculateWorkoutDuration(exercises);
               return (
                 <TouchableOpacity
                   key={day.id}
@@ -192,7 +196,8 @@ export default function WorkoutScreen() {
                     </View>
                     <View style={styles.dayCardRightImg}>
                       <Text style={styles.exCountImg}>{exercises.length}</Text>
-                      <Text style={styles.exLabelImg}>exercises</Text>
+                      <Text style={styles.exLabelImg}>{t.exercises}</Text>
+                      <Text style={styles.exLabelImg}>{durLabel}</Text>
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -204,14 +209,14 @@ export default function WorkoutScreen() {
         {/* Recent Sessions */}
         {sessions.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Recent Sessions</Text>
+            <Text style={styles.sectionTitle}>{t.recentSessions}</Text>
             {sessions.slice(0, 5).map((s) => (
               <Card key={s.id} style={styles.sessionCard}>
                 <View style={styles.sessionRow}>
                   <View>
                     <Text style={styles.sessionName}>{(s as any).workout_day?.name ?? 'Workout'}</Text>
                     <Text style={styles.sessionDate}>
-                      {s.completed_at ? format(parseISO(s.completed_at), 'EEE, MMM d · h:mm a') : 'In progress'}
+                      {s.completed_at ? format(parseISO(s.completed_at), 'EEE, MMM d · h:mm a') : t.inProgress}
                     </Text>
                   </View>
                   {s.duration_minutes && (

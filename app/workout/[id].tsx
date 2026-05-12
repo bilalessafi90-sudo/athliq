@@ -11,6 +11,8 @@ import { Card, Badge, Button, ExerciseImage } from '../../src/components/ui';
 import { Colors, Typography, Spacing, Radius } from '../../src/constants';
 import { WorkoutExercise, ActiveExercise, ActiveSet } from '../../src/types';
 import { getWorkoutDayFallbackImage } from '../../src/hooks/useExerciseImage';
+import { calculateWorkoutDuration } from '../../src/utils/workoutDuration';
+import { useT } from '../../src/stores/languageStore';
 
 export default function WorkoutDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -20,8 +22,10 @@ export default function WorkoutDetailScreen() {
   const { startSession: storeStart } = useWorkoutStore();
   const [starting, setStarting] = useState(false);
 
+  const t = useT();
   const exercises: WorkoutExercise[] = (day as any)?.workout_exercises ?? [];
   const sortedEx = [...exercises].sort((a, b) => a.order_index - b.order_index);
+  const { label: durationLabel } = calculateWorkoutDuration(sortedEx);
 
   const handleStart = async () => {
     if (!day || !activePlan) return;
@@ -100,14 +104,14 @@ export default function WorkoutDetailScreen() {
         <View style={styles.metaRow}>
           <Badge label={day.focus} color={Colors.primary} />
           <View style={styles.metaPills}>
-            <MetaPill icon="💪" label={`${sortedEx.length} exercises`} />
-            <MetaPill icon="⏱" label="~45–60 min" />
-            <MetaPill icon="🔁" label={`${sortedEx.reduce((a, e) => a + e.sets, 0)} sets`} />
+            <MetaPill icon="💪" label={`${sortedEx.length} ${t.exercises}`} />
+            <MetaPill icon="⏱" label={durationLabel} />
+            <MetaPill icon="🔁" label={`${sortedEx.reduce((a, e) => a + e.sets, 0)} ${t.sets.toLowerCase()}`} />
           </View>
         </View>
 
         {/* ── Exercise list ── */}
-        <Text style={styles.sectionTitle}>Exercises</Text>
+        <Text style={styles.sectionTitle}>{t.exercises.charAt(0).toUpperCase() + t.exercises.slice(1)}</Text>
 
         {sortedEx.map((we, index) => {
           const ex = (we as any).exercise;
@@ -141,15 +145,15 @@ export default function WorkoutDetailScreen() {
 
                 {/* Sets / Reps / Rest grid */}
                 <View style={styles.setsRow}>
-                  <SetPill label="Sets" value={String(we.sets)} />
-                  <SetPill label="Reps" value={we.reps} highlight />
-                  <SetPill label="Rest" value={`${we.rest_seconds}s`} />
+                  <SetPill label={t.sets} value={String(we.sets)} />
+                  <SetPill label={t.reps} value={we.reps} highlight />
+                  <SetPill label={t.rest} value={`${we.rest_seconds}s`} />
                 </View>
 
                 {/* Instructions */}
                 {ex?.instructions && (
                   <View style={styles.instructionBox}>
-                    <Text style={styles.instructionLabel}>How to perform</Text>
+                    <Text style={styles.instructionLabel}>{t.howToPerform}</Text>
                     <Text style={styles.instructions}>{ex.instructions}</Text>
                   </View>
                 )}
@@ -157,7 +161,7 @@ export default function WorkoutDetailScreen() {
                 {/* Equipment tags */}
                 {ex?.equipment && ex.equipment.length > 0 && (
                   <View style={styles.equipRow}>
-                    <Text style={styles.equipLabel}>Equipment</Text>
+                    <Text style={styles.equipLabel}>{t.equipment}</Text>
                     <View style={styles.equipTags}>
                       {ex.equipment.map((e: string) => (
                         <View key={e} style={styles.equipTag}>
@@ -183,7 +187,7 @@ export default function WorkoutDetailScreen() {
       {/* ── Sticky start button ── */}
       <View style={styles.footer}>
         <Button
-          title={starting ? 'Starting…' : '▶  Start Workout'}
+          title={starting ? t.starting : t.startWorkoutBtn}
           onPress={handleStart}
           loading={starting}
           size="lg"

@@ -11,10 +11,14 @@ import { useUpdateProfile } from '../../src/hooks/useProfile';
 import { profileService } from '../../src/services/profileService';
 import { Card, Badge, Input, Button } from '../../src/components/ui';
 import { Colors, Typography, Spacing, Radius, FITNESS_GOALS, EXPERIENCE_LEVELS } from '../../src/constants';
+import { useLanguageStore, useT } from '../../src/stores/languageStore';
+import type { Language } from '../../src/i18n/translations';
 
 export default function ProfileScreen() {
   const { profile, user, clear } = useAuthStore();
   const updateProfile = useUpdateProfile();
+  const t = useT();
+  const { language, setLanguage } = useLanguageStore();
 
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(profile?.name ?? '');
@@ -38,7 +42,7 @@ export default function ProfileScreen() {
       height: parseFloat(height) || undefined,
     });
     setEditing(false);
-    Alert.alert('Saved', 'Profile updated successfully.');
+    Alert.alert(t.success, language === 'de' ? 'Profil erfolgreich aktualisiert.' : 'Profile updated successfully.');
   };
 
   const handleAvatarPick = async () => {
@@ -64,31 +68,39 @@ export default function ProfileScreen() {
   };
 
   const handleSignOut = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          await supabase.auth.signOut();
-          clear();
-          router.replace('/(auth)/login');
+    Alert.alert(
+      language === 'de' ? 'Abmelden' : 'Sign Out',
+      t.signOutConfirm,
+      [
+        { text: t.cancel, style: 'cancel' },
+        {
+          text: language === 'de' ? 'Abmelden' : 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.auth.signOut();
+            clear();
+            router.replace('/(auth)/login');
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const handleResetOnboarding = () => {
-    Alert.alert('Reset Onboarding', 'This will take you through setup again.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Continue',
-        onPress: async () => {
-          await updateProfile.mutateAsync({ onboarding_completed: false });
-          router.replace('/(onboarding)/welcome');
+    Alert.alert(
+      language === 'de' ? 'Einrichtung wiederholen' : 'Reset Onboarding',
+      language === 'de' ? 'Du wirst erneut durch die Einrichtung geführt.' : 'This will take you through setup again.',
+      [
+        { text: t.cancel, style: 'cancel' },
+        {
+          text: language === 'de' ? 'Weiter' : 'Continue',
+          onPress: async () => {
+            await updateProfile.mutateAsync({ onboarding_completed: false });
+            router.replace('/(onboarding)/welcome');
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   return (
@@ -119,11 +131,11 @@ export default function ProfileScreen() {
 
         {/* ── Stats Strip ────────────────────────────────────────── */}
         <View style={styles.statsStrip}>
-          <StatItem label="Height" value={profile?.height ? `${profile.height} cm` : '—'} />
+          <StatItem label={t.height} value={profile?.height ? `${profile.height} cm` : '—'} />
           <View style={styles.statDivider} />
-          <StatItem label="Weight" value={profile?.weight ? `${profile.weight} ${profile.weight_unit}` : '—'} />
+          <StatItem label={t.weight} value={profile?.weight ? `${profile.weight} ${profile.weight_unit}` : '—'} />
           <View style={styles.statDivider} />
-          <StatItem label="Age" value={profile?.age ? `${profile.age} yrs` : '—'} />
+          <StatItem label={t.age} value={profile?.age ? `${profile.age} ${t.years}` : '—'} />
         </View>
 
         {/* ── Edit Profile ───────────────────────────────────────── */}
@@ -131,49 +143,75 @@ export default function ProfileScreen() {
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Profile</Text>
             <TouchableOpacity onPress={() => (editing ? handleSave() : setEditing(true))}>
-              <Text style={styles.editBtn}>{editing ? 'Save ✓' : 'Edit'}</Text>
+              <Text style={styles.editBtn}>{editing ? t.save : t.edit}</Text>
             </TouchableOpacity>
           </View>
           {editing ? (
             <Card style={{ gap: Spacing.base }}>
-              <Input label="Name" value={name} onChangeText={setName} placeholder="Your name" autoCapitalize="words" />
-              <Input label="Age" value={age} onChangeText={setAge} keyboardType="number-pad" suffix="years" placeholder="e.g. 28" />
-              <Input label="Weight" value={weight} onChangeText={setWeight} keyboardType="decimal-pad" suffix={profile?.weight_unit ?? 'kg'} placeholder="e.g. 75" />
-              <Input label="Height" value={height} onChangeText={setHeight} keyboardType="decimal-pad" suffix="cm" placeholder="e.g. 178" />
-              <Button title="Cancel" onPress={() => setEditing(false)} variant="ghost" size="sm" />
+              <Input label={t.name} value={name} onChangeText={setName} placeholder="Your name" autoCapitalize="words" />
+              <Input label={t.age} value={age} onChangeText={setAge} keyboardType="number-pad" suffix={t.years} placeholder="e.g. 28" />
+              <Input label={t.weight} value={weight} onChangeText={setWeight} keyboardType="decimal-pad" suffix={profile?.weight_unit ?? 'kg'} placeholder="e.g. 75" />
+              <Input label={t.height} value={height} onChangeText={setHeight} keyboardType="decimal-pad" suffix="cm" placeholder="e.g. 178" />
+              <Button title={t.cancel} onPress={() => setEditing(false)} variant="ghost" size="sm" />
             </Card>
           ) : (
             <Card style={{ gap: Spacing.md }}>
-              <ProfileRow label="Experience" value={expInfo?.label ?? '—'} />
-              <ProfileRow label="Training Days" value={`${profile?.preferred_days_per_week ?? 3} days/week`} />
-              <ProfileRow label="Equipment" value={profile?.available_equipment?.join(', ') || 'None set'} />
-              <ProfileRow label="Diet" value={profile?.dietary_preferences?.join(', ') || 'No restrictions'} />
-              <ProfileRow label="Units" value={`${profile?.weight_unit ?? 'kg'} / ${profile?.measurement_unit ?? 'cm'}`} />
+              <ProfileRow label={t.experience} value={expInfo?.label ?? '—'} />
+              <ProfileRow label={t.trainingDays} value={`${profile?.preferred_days_per_week ?? 3} ${t.daysPerWeek}`} />
+              <ProfileRow label={t.equipmentLabel} value={profile?.available_equipment?.join(', ') || (language === 'de' ? 'Nicht festgelegt' : 'None set')} />
+              <ProfileRow label={t.diet} value={profile?.dietary_preferences?.join(', ') || t.noRestrictions} />
+              <ProfileRow label={t.units} value={`${profile?.weight_unit ?? 'kg'} / ${profile?.measurement_unit ?? 'cm'}`} />
             </Card>
           )}
         </View>
 
+        {/* ── Language ───────────────────────────────────────────── */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t.language}</Text>
+          <Card style={{ gap: 0 }}>
+            <View style={styles.langRow}>
+              <TouchableOpacity
+                onPress={() => setLanguage('en')}
+                style={[styles.langBtn, language === 'en' && styles.langBtnActive]}
+              >
+                <Text style={[styles.langBtnText, language === 'en' && styles.langBtnTextActive]}>
+                  {t.english}
+                </Text>
+              </TouchableOpacity>
+              <View style={styles.langDivider} />
+              <TouchableOpacity
+                onPress={() => setLanguage('de')}
+                style={[styles.langBtn, language === 'de' && styles.langBtnActive]}
+              >
+                <Text style={[styles.langBtnText, language === 'de' && styles.langBtnTextActive]}>
+                  {t.german}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Card>
+        </View>
+
         {/* ── Notifications ──────────────────────────────────────── */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Notifications</Text>
+          <Text style={styles.sectionTitle}>{t.notifications}</Text>
           <Card style={{ gap: Spacing.md }}>
             <NotifRow
-              label="Workout Reminders"
-              description="Daily reminder to train"
+              label={t.workoutReminder}
+              description={t.workoutReminderDesc}
               value={notifWorkout}
               onChange={setNotifWorkout}
             />
             <View style={styles.notifDivider} />
             <NotifRow
-              label="Meal Reminders"
-              description="Breakfast, lunch & dinner nudges"
+              label={t.mealReminder}
+              description={t.mealReminderDesc}
               value={notifMeal}
               onChange={setNotifMeal}
             />
             <View style={styles.notifDivider} />
             <NotifRow
-              label="Progress Check-In"
-              description="Weekly weight logging reminder"
+              label={t.progressCheckin}
+              description={t.progressCheckinDesc}
               value={notifProgress}
               onChange={setNotifProgress}
             />
@@ -182,19 +220,19 @@ export default function ProfileScreen() {
 
         {/* ── App ────────────────────────────────────────────────── */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>App</Text>
+          <Text style={styles.sectionTitle}>{t.appSection}</Text>
           <Card style={{ gap: 0 }}>
-            <ActionRow label="🔄 Redo Onboarding" onPress={handleResetOnboarding} />
+            <ActionRow label={t.redoOnboarding} onPress={handleResetOnboarding} />
             <View style={styles.notifDivider} />
-            <ActionRow label="📋 Terms of Service" onPress={() => {}} />
+            <ActionRow label={t.terms} onPress={() => {}} />
             <View style={styles.notifDivider} />
-            <ActionRow label="🔒 Privacy Policy" onPress={() => {}} />
+            <ActionRow label={t.privacy} onPress={() => {}} />
             <View style={styles.notifDivider} />
-            <ActionRow label="🚪 Sign Out" onPress={handleSignOut} destructive />
+            <ActionRow label={t.signOut} onPress={handleSignOut} destructive />
           </Card>
         </View>
 
-        <Text style={styles.version}>Athliq v1.0.0 · Built with ❤️</Text>
+        <Text style={styles.version}>{t.version}</Text>
         <View style={{ height: Spacing['3xl'] }} />
       </ScrollView>
     </SafeAreaView>
@@ -267,6 +305,12 @@ const styles = StyleSheet.create({
   editBtn: { fontSize: Typography.sizes.sm, color: Colors.primary, fontWeight: Typography.weights.semibold },
   notifDivider: { height: 1, backgroundColor: Colors.border },
   version: { textAlign: 'center', fontSize: Typography.sizes.xs, color: Colors.textMuted, marginBottom: Spacing.base },
+  langRow: { flexDirection: 'row' },
+  langBtn: { flex: 1, alignItems: 'center', paddingVertical: Spacing.md },
+  langBtnActive: { backgroundColor: Colors.primary + '18' },
+  langBtnText: { fontSize: Typography.sizes.base, color: Colors.textSecondary },
+  langBtnTextActive: { color: Colors.primary, fontWeight: Typography.weights.semibold },
+  langDivider: { width: 1, backgroundColor: Colors.border, marginVertical: Spacing.xs },
 });
 
 const si = StyleSheet.create({

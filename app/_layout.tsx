@@ -7,11 +7,17 @@ import { StyleSheet } from 'react-native';
 import { queryClient } from '../src/lib/queryClient';
 import { supabase } from '../src/lib/supabase';
 import { useAuthStore } from '../src/stores/authStore';
+import { useLanguageStore } from '../src/stores/languageStore';
 import { profileService } from '../src/services/profileService';
 import { Colors } from '../src/constants';
 
 export default function RootLayout() {
   const { setSession, setProfile, setLoading } = useAuthStore();
+  const { loadLanguage } = useLanguageStore();
+
+  useEffect(() => {
+    loadLanguage();
+  }, []);
 
   useEffect(() => {
     // Listen for auth changes
