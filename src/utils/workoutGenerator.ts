@@ -3,7 +3,7 @@ import { FitnessGoal, ExperienceLevel, WorkoutDay, WorkoutExercise, DayOfWeek } 
 import { PLAN_DURATION_WEEKS } from '../constants';
 import { calculateWorkoutDuration } from './workoutDuration';
 
-const MAX_WORKOUT_MINUTES = 60;
+const MAX_WORKOUT_MINUTES = 70;
 
 // ─── Exercise Templates ──────────────────────────────────────────────────────
 
@@ -409,12 +409,26 @@ function selectExercises(
     });
   }
 
+  // Guarantee at least one core / ab exercise in every session
+  const hasCore = selected.some((ex) => ex.muscle_groups.includes('Core'));
+  if (!hasCore) {
+    const corePool = eligible
+      .filter((ex) => ex.muscle_groups.includes('Core') && !used.has(ex.name))
+      .sort(() => 0.5 - Math.sin(rotationSeed + 99));
+    if (corePool.length > 0) {
+      selected.push(adjustForGoal(corePool[0], goal, experience));
+    }
+  }
+
   return trimToMaxDuration(selected);
 }
 
-/** Remove exercises from the end until the workout fits within MAX_WORKOUT_MINUTES. */
+/**
+ * Remove exercises from the end until the workout fits within MAX_WORKOUT_MINUTES.
+ * Core exercises are protected — the last core exercise is never removed.
+ */
 function trimToMaxDuration(exercises: ExerciseTemplate[]): ExerciseTemplate[] {
-  let trimmed = exercises;
+  let trimmed = [...exercises];
   while (trimmed.length > 1) {
     const { totalMinutes } = calculateWorkoutDuration(
       trimmed.map((e, i) => ({
@@ -429,7 +443,20 @@ function trimToMaxDuration(exercises: ExerciseTemplate[]): ExerciseTemplate[] {
       })) as WorkoutExercise[],
     );
     if (totalMinutes <= MAX_WORKOUT_MINUTES) break;
-    trimmed = trimmed.slice(0, -1);
+
+    // Find the last exercise that can be removed without losing all core exercises
+    const coreCount = trimmed.filter((e) => e.muscle_groups.includes('Core')).length;
+    let removeIdx = trimmed.length - 1;
+    while (
+      removeIdx > 0 &&
+      coreCount <= 1 &&
+      trimmed[removeIdx].muscle_groups.includes('Core')
+    ) {
+      removeIdx--;
+    }
+    // If only a single core exercise remains and everything else is also core, stop
+    if (removeIdx === 0) break;
+    trimmed = trimmed.filter((_, i) => i !== removeIdx);
   }
   return trimmed;
 }
