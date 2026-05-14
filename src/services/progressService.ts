@@ -1,4 +1,3 @@
-import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from '../lib/supabase';
 import { WeightLog, MeasurementLog, ProgressPhoto, MeasurementType, WeightUnit } from '../types';
 
@@ -91,38 +90,24 @@ export const progressService = {
     uri: string,
     notes?: string,
   ): Promise<ProgressPhoto> {
-    // Always save as JPEG — ImagePicker with allowsEditing converts HEIC → JPEG on iOS.
+    // expo-image-picker with allowsEditing:true always saves to a local file://
+    // URI, so we can fetch it as a Blob and pass straight to the Supabase SDK.
     const fileName = `${userId}/${Date.now()}.jpg`;
 
-    // FileSystem.uploadAsync handles local iOS photo-library URIs correctly.
-    // The fetch().blob() approach produces a corrupted upload on iOS.
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new Error('Not authenticated');
+    // 1. Turn the local URI into a Blob.
+    const localResponse = await fetch(uri);
+    const blob = await localResponse.blob();
 
-    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-    const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+    // 2. Upload via the Supabase Storage SDK (handles auth headers automatically).
+    const { error: uploadError } = await supabase.storage
+      .from('progress-photos')
+      .upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
 
-    const result = await FileSystem.uploadAsync(
-      `${supabaseUrl}/storage/v1/object/progress-photos/${fileName}`,
-      uri,
-      {
-        httpMethod: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          apikey: supabaseKey,
-          'Content-Type': 'image/jpeg',
-          'x-upsert': 'false',
-        },
-      },
-    );
+    if (uploadError) throw uploadError;
 
-    if (result.status !== 200) {
-      throw new Error(`Upload failed (${result.status}): ${result.body}`);
-    }
-
-    // Store the full public URL so the Image component can load it directly.
-    // ⚠️  The "progress-photos" bucket must be set to Public in the Supabase
-    //     Dashboard (Storage → Buckets → progress-photos → Edit → Public).
+    // 3. Build the public URL and save the DB row.
+    // ⚠️  The "progress-photos" bucket must be set to Public in Supabase Dashboard
+    //     (Storage → Buckets → progress-photos → Edit → Public).
     const { data: urlData } = supabase.storage
       .from('progress-photos')
       .getPublicUrl(fileName);
