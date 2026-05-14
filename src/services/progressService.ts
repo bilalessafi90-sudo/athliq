@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system';
 import { supabase } from '../lib/supabase';
 import { WeightLog, MeasurementLog, ProgressPhoto, MeasurementType, WeightUnit } from '../types';
 
@@ -90,16 +91,34 @@ export const progressService = {
     uri: string,
     notes?: string,
   ): Promise<ProgressPhoto> {
-    const rawExt = uri.split('.').pop()?.toLowerCase() ?? 'jpg';
-    const ext = ['jpg', 'jpeg', 'png', 'webp', 'heic'].includes(rawExt) ? rawExt : 'jpg';
-    const fileName = `${userId}/${Date.now()}.${ext}`;
-    const response = await fetch(uri);
-    const blob = await response.blob();
+    // Always save as JPEG — ImagePicker with allowsEditing converts HEIC → JPEG on iOS.
+    const fileName = `${userId}/${Date.now()}.jpg`;
 
-    const { error: uploadError } = await supabase.storage
-      .from('progress-photos')
-      .upload(fileName, blob, { contentType: `image/${ext}` });
-    if (uploadError) throw uploadError;
+    // FileSystem.uploadAsync handles local iOS photo-library URIs correctly.
+    // The fetch().blob() approach produces a corrupted upload on iOS.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not authenticated');
+
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+    const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+
+    const result = await FileSystem.uploadAsync(
+      `${supabaseUrl}/storage/v1/object/progress-photos/${fileName}`,
+      uri,
+      {
+        httpMethod: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          apikey: supabaseKey,
+          'Content-Type': 'image/jpeg',
+          'x-upsert': 'false',
+        },
+      },
+    );
+
+    if (result.status !== 200) {
+      throw new Error(`Upload failed (${result.status}): ${result.body}`);
+    }
 
     // Store the full public URL so the Image component can load it directly.
     // ⚠️  The "progress-photos" bucket must be set to Public in the Supabase

@@ -7,6 +7,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { format, parseISO } from 'date-fns';
 import { useWeightLogs, useLogWeight, useProgressPhotos, useUploadPhoto, useDeletePhoto, useLatestMeasurements, useLogMeasurement } from '../../src/hooks/useProgress';
+import { useRecentSessions } from '../../src/hooks/useWorkout';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Card, Button, Input, Badge } from '../../src/components/ui';
 import { Colors, Typography, Spacing, Radius, MEASUREMENT_TYPES } from '../../src/constants';
@@ -16,7 +17,7 @@ import { useT, useLanguageStore } from '../../src/stores/languageStore';
 const { width: SCREEN_W } = Dimensions.get('window');
 const PHOTO_SIZE = (SCREEN_W - Spacing['2xl'] * 2 - Spacing.md) / 2;
 
-type Tab = 'weight' | 'measurements' | 'photos';
+type Tab = 'weight' | 'measurements' | 'photos' | 'workouts';
 
 export default function ProgressScreen() {
   const { profile } = useAuthStore();
@@ -33,6 +34,7 @@ export default function ProgressScreen() {
 
   const { data: weightLogs = [] } = useWeightLogs(90);
   const { data: photos = [] } = useProgressPhotos();
+  const { data: sessions = [] } = useRecentSessions(50);
   const { data: latestMeasurements = {} } = useLatestMeasurements();
   const logWeight = useLogWeight();
   const uploadPhoto = useUploadPhoto();
@@ -124,28 +126,30 @@ export default function ProgressScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>{t.progress}</Text>
-        <TouchableOpacity
-          onPress={() => activeTab === 'weight' ? setShowWeightModal(true) : activeTab === 'measurements' ? setShowMeasureModal(true) : handleAddPhoto()}
-          style={styles.addBtn}
-        >
-          <Text style={styles.addBtnText}>+ Log</Text>
-        </TouchableOpacity>
+        {activeTab !== 'workouts' && (
+          <TouchableOpacity
+            onPress={() => activeTab === 'weight' ? setShowWeightModal(true) : activeTab === 'measurements' ? setShowMeasureModal(true) : handleAddPhoto()}
+            style={styles.addBtn}
+          >
+            <Text style={styles.addBtnText}>+ Log</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Tab Bar */}
-      <View style={styles.tabBar}>
-        {(['weight', 'measurements', 'photos'] as Tab[]).map((tab) => (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabBarScroll} contentContainerStyle={styles.tabBar}>
+        {(['weight', 'measurements', 'photos', 'workouts'] as Tab[]).map((tab) => (
           <TouchableOpacity
             key={tab}
             onPress={() => setActiveTab(tab)}
             style={[styles.tab, activeTab === tab && styles.tabActive]}
           >
             <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-              {tab === 'weight' ? t.bodyWeight : tab === 'measurements' ? t.measurements : t.progressPhotos}
+              {tab === 'weight' ? t.bodyWeight : tab === 'measurements' ? t.measurements : tab === 'photos' ? t.progressPhotos : t.workoutsTab}
             </Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* ── Weight Tab ─────────────────────────────────────────── */}
@@ -248,6 +252,41 @@ export default function ProgressScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
+            )}
+          </View>
+        )}
+
+        {/* ── Workouts Tab ───────────────────────────────────────── */}
+        {activeTab === 'workouts' && (
+          <View style={styles.section}>
+            <Text style={styles.subTitle}>{t.workoutHistory}</Text>
+            {sessions.length === 0 ? (
+              <EmptyState icon="🏋️" text={t.noWorkoutsYet} />
+            ) : (
+              sessions.map((s) => {
+                const day = (s as any).workout_day;
+                const name = day?.name ?? day?.focus ?? 'Workout';
+                const date = s.completed_at ? format(parseISO(s.completed_at), 'EEE, MMM d · h:mm a') : '';
+                const dur = s.duration_minutes ? `${s.duration_minutes} ${t.minDuration}` : null;
+                return (
+                  <Card key={s.id} style={styles.sessionCard}>
+                    <View style={styles.sessionHeader}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.sessionName}>{name}</Text>
+                        <Text style={styles.sessionDate}>{date}</Text>
+                      </View>
+                      {dur && (
+                        <View style={styles.sessionBadge}>
+                          <Text style={styles.sessionBadgeText}>⏱ {dur}</Text>
+                        </View>
+                      )}
+                    </View>
+                    {day?.focus && day.focus !== name && (
+                      <Text style={styles.sessionFocus}>{day.focus}</Text>
+                    )}
+                  </Card>
+                );
+              })
             )}
           </View>
         )}
@@ -445,8 +484,9 @@ const styles = StyleSheet.create({
   title: { fontSize: Typography.sizes['2xl'], fontWeight: Typography.weights.bold, color: Colors.textPrimary },
   addBtn: { backgroundColor: Colors.primary + '22', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.primary + '55' },
   addBtnText: { color: Colors.primary, fontSize: Typography.sizes.sm, fontWeight: Typography.weights.semibold },
-  tabBar: { flexDirection: 'row', paddingHorizontal: Spacing['2xl'], gap: Spacing.sm, marginBottom: Spacing.base },
-  tab: { flex: 1, alignItems: 'center', paddingVertical: Spacing.sm, borderRadius: Radius.md, backgroundColor: Colors.card },
+  tabBarScroll: { marginBottom: Spacing.base },
+  tabBar: { flexDirection: 'row', paddingHorizontal: Spacing['2xl'], gap: Spacing.sm },
+  tab: { alignItems: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.md, backgroundColor: Colors.card },
   tabActive: { backgroundColor: Colors.primary },
   tabText: { fontSize: Typography.sizes.sm, fontWeight: Typography.weights.medium, color: Colors.textSecondary },
   tabTextActive: { color: Colors.white },
@@ -467,6 +507,13 @@ const styles = StyleSheet.create({
   measureRight: { alignItems: 'flex-end' },
   measureValue: { fontSize: Typography.sizes.base, fontWeight: Typography.weights.bold, color: Colors.primary },
   measureDate: { fontSize: Typography.sizes.xs, color: Colors.textMuted },
+  sessionCard: { gap: Spacing.xs },
+  sessionHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md },
+  sessionName: { fontSize: Typography.sizes.base, fontWeight: Typography.weights.bold, color: Colors.textPrimary },
+  sessionDate: { fontSize: Typography.sizes.xs, color: Colors.textSecondary, marginTop: 2 },
+  sessionFocus: { fontSize: Typography.sizes.sm, color: Colors.primary, fontWeight: Typography.weights.medium },
+  sessionBadge: { backgroundColor: Colors.primary + '18', borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs },
+  sessionBadgeText: { fontSize: Typography.sizes.xs, color: Colors.primary, fontWeight: Typography.weights.semibold },
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md },
   photoWrap: { width: PHOTO_SIZE },
   photo: { width: PHOTO_SIZE, height: PHOTO_SIZE * 1.3, borderRadius: Radius.md },
