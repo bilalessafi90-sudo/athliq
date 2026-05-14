@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from '../lib/supabase';
 import { WeightLog, MeasurementLog, ProgressPhoto, MeasurementType, WeightUnit } from '../types';
 
