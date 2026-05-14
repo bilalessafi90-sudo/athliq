@@ -2,16 +2,16 @@ import React, { useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   SafeAreaView, Modal, TextInput, Alert, Image,
-  FlatList, Dimensions,
+  FlatList, Dimensions, ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { format, parseISO } from 'date-fns';
-import { useWeightLogs, useLogWeight, useProgressPhotos, useUploadPhoto, useLatestMeasurements, useLogMeasurement } from '../../src/hooks/useProgress';
+import { useWeightLogs, useLogWeight, useProgressPhotos, useUploadPhoto, useDeletePhoto, useLatestMeasurements, useLogMeasurement } from '../../src/hooks/useProgress';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Card, Button, Input, Badge } from '../../src/components/ui';
 import { Colors, Typography, Spacing, Radius, MEASUREMENT_TYPES } from '../../src/constants';
-import { MeasurementType, WeightUnit } from '../../src/types';
-import { useT } from '../../src/stores/languageStore';
+import { MeasurementType, WeightUnit, ProgressPhoto } from '../../src/types';
+import { useT, useLanguageStore } from '../../src/stores/languageStore';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const PHOTO_SIZE = (SCREEN_W - Spacing['2xl'] * 2 - Spacing.md) / 2;
@@ -21,6 +21,7 @@ type Tab = 'weight' | 'measurements' | 'photos';
 export default function ProgressScreen() {
   const { profile } = useAuthStore();
   const t = useT();
+  const { language } = useLanguageStore();
   const [activeTab, setActiveTab] = useState<Tab>('weight');
   const [showWeightModal, setShowWeightModal] = useState(false);
   const [showMeasureModal, setShowMeasureModal] = useState(false);
@@ -28,12 +29,37 @@ export default function ProgressScreen() {
   const [measureType, setMeasureType] = useState<MeasurementType>('chest');
   const [measureValue, setMeasureValue] = useState('');
 
+  const [viewPhoto, setViewPhoto] = useState<ProgressPhoto | null>(null);
+
   const { data: weightLogs = [] } = useWeightLogs(90);
   const { data: photos = [] } = useProgressPhotos();
   const { data: latestMeasurements = {} } = useLatestMeasurements();
   const logWeight = useLogWeight();
   const uploadPhoto = useUploadPhoto();
+  const deletePhoto = useDeletePhoto();
   const logMeasurement = useLogMeasurement();
+
+  const handleDeletePhoto = (photo: ProgressPhoto) => {
+    Alert.alert(
+      language === 'de' ? 'Foto löschen' : 'Delete Photo',
+      language === 'de' ? 'Dieses Foto wirklich löschen?' : 'Are you sure you want to delete this photo?',
+      [
+        { text: t.cancel, style: 'cancel' },
+        {
+          text: t.delete,
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deletePhoto.mutateAsync({ id: photo.id, url: photo.photo_url });
+              setViewPhoto(null);
+            } catch (e: any) {
+              Alert.alert(t.error, e?.message ?? 'Could not delete photo.');
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const unit = profile?.weight_unit ?? 'kg';
 
@@ -212,10 +238,14 @@ export default function ProgressScreen() {
             ) : (
               <View style={styles.photoGrid}>
                 {photos.map((p) => (
-                  <View key={p.id} style={styles.photoWrap}>
-                    <Image source={{ uri: p.photo_url }} style={styles.photo} resizeMode="cover" />
+                  <TouchableOpacity key={p.id} style={styles.photoWrap} activeOpacity={0.85} onPress={() => setViewPhoto(p)}>
+                    <Image
+                      source={{ uri: p.photo_url }}
+                      style={styles.photo}
+                      resizeMode="cover"
+                    />
                     <Text style={styles.photoDate}>{format(parseISO(p.logged_at), 'MMM d')}</Text>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
@@ -241,6 +271,43 @@ export default function ProgressScreen() {
             <Button title={t.save} onPress={handleLogWeight} loading={logWeight.isPending} style={{ marginTop: Spacing.base }} />
             <Button title={t.cancel} onPress={() => setShowWeightModal(false)} variant="ghost" />
           </View>
+        </View>
+      </Modal>
+
+      {/* ── Full-Screen Photo Viewer ─────────────────────────────── */}
+      <Modal visible={!!viewPhoto} transparent animationType="fade" statusBarTranslucent>
+        <View style={viewer.overlay}>
+          <SafeAreaView style={viewer.safe}>
+            {/* Close */}
+            <TouchableOpacity onPress={() => setViewPhoto(null)} style={viewer.closeBtn}>
+              <Text style={viewer.closeText}>✕</Text>
+            </TouchableOpacity>
+
+            {viewPhoto && (
+              <>
+                <Image
+                  source={{ uri: viewPhoto.photo_url }}
+                  style={viewer.image}
+                  resizeMode="contain"
+                />
+                <View style={viewer.footer}>
+                  <Text style={viewer.dateText}>
+                    {format(parseISO(viewPhoto.logged_at), 'EEEE, MMMM d, yyyy')}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => handleDeletePhoto(viewPhoto)}
+                    style={viewer.deleteBtn}
+                    disabled={deletePhoto.isPending}
+                  >
+                    {deletePhoto.isPending
+                      ? <ActivityIndicator color={Colors.error} size="small" />
+                      : <Text style={viewer.deleteBtnText}>🗑  {t.delete}</Text>
+                    }
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </SafeAreaView>
         </View>
       </Modal>
 
@@ -422,4 +489,28 @@ const es = StyleSheet.create({
   wrap: { alignItems: 'center', paddingVertical: Spacing['3xl'], gap: Spacing.md },
   icon: { fontSize: 40 },
   text: { fontSize: Typography.sizes.sm, color: Colors.textSecondary, textAlign: 'center', lineHeight: 22 },
+});
+
+const viewer = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.97)' },
+  safe: { flex: 1 },
+  closeBtn: {
+    alignSelf: 'flex-end', margin: Spacing.base,
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  closeText: { color: '#fff', fontSize: Typography.sizes.lg, fontWeight: '600' },
+  image: { flex: 1, width: '100%' },
+  footer: {
+    padding: Spacing['2xl'], paddingBottom: Spacing['3xl'],
+    gap: Spacing.md, alignItems: 'center',
+  },
+  dateText: { color: 'rgba(255,255,255,0.6)', fontSize: Typography.sizes.sm },
+  deleteBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    borderWidth: 1, borderColor: Colors.error + '88',
+    borderRadius: Radius.md, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md,
+  },
+  deleteBtnText: { color: Colors.error, fontSize: Typography.sizes.base, fontWeight: '600' },
 });

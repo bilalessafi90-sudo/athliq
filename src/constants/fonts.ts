@@ -1,14 +1,25 @@
+import { Dimensions, PixelRatio } from 'react-native';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// Base design width = 390pt (iPhone 14 standard).
+// moderateScale applies only a fraction of the proportional change so
+// text doesn't become extreme on very large/small screens.
+function ms(size: number, factor = 0.35): number {
+  const scaled = size * (SCREEN_WIDTH / 390);
+  return Math.round(PixelRatio.roundToNearestPixel(size + (scaled - size) * factor));
+}
+
 export const Typography = {
   sizes: {
-    xs: 11,
-    sm: 13,
-    base: 15,
-    md: 17,
-    lg: 20,
-    xl: 24,
-    '2xl': 28,
-    '3xl': 34,
-    '4xl': 40,
+    xs: ms(11),
+    sm: ms(13),
+    base: ms(15),
+    md: ms(17),
+    lg: ms(20),
+    xl: ms(24),
+    '2xl': ms(28),
+    '3xl': ms(34),
+    '4xl': ms(40),
   },
   weights: {
     regular: '400' as const,

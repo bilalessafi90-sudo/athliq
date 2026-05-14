@@ -41,6 +41,15 @@ export function useUploadPhoto() {
   });
 }
 
+export function useDeletePhoto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, url }: { id: string; url: string }) =>
+      progressService.deleteProgressPhoto(id, url),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['progressPhotos'] }),
+  });
+}
+
 export function useLatestMeasurements() {
   const { user } = useAuthStore();
   return useQuery({
