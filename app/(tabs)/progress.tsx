@@ -11,6 +11,7 @@ import { useAuthStore } from '../../src/stores/authStore';
 import { Card, Button, Input, Badge } from '../../src/components/ui';
 import { Colors, Typography, Spacing, Radius, MEASUREMENT_TYPES } from '../../src/constants';
 import { MeasurementType, WeightUnit } from '../../src/types';
+import { useT } from '../../src/stores/languageStore';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const PHOTO_SIZE = (SCREEN_W - Spacing['2xl'] * 2 - Spacing.md) / 2;
@@ -19,6 +20,7 @@ type Tab = 'weight' | 'measurements' | 'photos';
 
 export default function ProgressScreen() {
   const { profile } = useAuthStore();
+  const t = useT();
   const [activeTab, setActiveTab] = useState<Tab>('weight');
   const [showWeightModal, setShowWeightModal] = useState(false);
   const [showMeasureModal, setShowMeasureModal] = useState(false);
@@ -95,7 +97,7 @@ export default function ProgressScreen() {
     <SafeAreaView style={styles.root}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Progress</Text>
+        <Text style={styles.title}>{t.progress}</Text>
         <TouchableOpacity
           onPress={() => activeTab === 'weight' ? setShowWeightModal(true) : activeTab === 'measurements' ? setShowMeasureModal(true) : handleAddPhoto()}
           style={styles.addBtn}
@@ -113,7 +115,7 @@ export default function ProgressScreen() {
             style={[styles.tab, activeTab === tab && styles.tabActive]}
           >
             <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab === 'weight' ? t.bodyWeight : tab === 'measurements' ? t.measurements : t.progressPhotos}
             </Text>
           </TouchableOpacity>
         ))}
@@ -227,7 +229,7 @@ export default function ProgressScreen() {
       <Modal visible={showWeightModal} transparent animationType="slide">
         <View style={modal.overlay}>
           <View style={modal.sheet}>
-            <Text style={modal.title}>Log Weight</Text>
+            <Text style={modal.title}>{t.addWeight}</Text>
             <Input
               label={`Weight (${unit})`}
               placeholder={unit === 'kg' ? 'e.g. 75.5' : 'e.g. 165'}
@@ -236,8 +238,8 @@ export default function ProgressScreen() {
               keyboardType="decimal-pad"
               suffix={unit}
             />
-            <Button title="Save" onPress={handleLogWeight} loading={logWeight.isPending} style={{ marginTop: Spacing.base }} />
-            <Button title="Cancel" onPress={() => setShowWeightModal(false)} variant="ghost" />
+            <Button title={t.save} onPress={handleLogWeight} loading={logWeight.isPending} style={{ marginTop: Spacing.base }} />
+            <Button title={t.cancel} onPress={() => setShowWeightModal(false)} variant="ghost" />
           </View>
         </View>
       </Modal>
@@ -246,7 +248,7 @@ export default function ProgressScreen() {
       <Modal visible={showMeasureModal} transparent animationType="slide">
         <View style={modal.overlay}>
           <View style={modal.sheet}>
-            <Text style={modal.title}>Log Measurement</Text>
+            <Text style={modal.title}>{t.addMeasurement}</Text>
             <View style={styles.measureTypeRow}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: Spacing.sm }}>
                 {MEASUREMENT_TYPES.map((m) => (
@@ -268,8 +270,8 @@ export default function ProgressScreen() {
               keyboardType="decimal-pad"
               suffix={profile?.measurement_unit ?? 'cm'}
             />
-            <Button title="Save" onPress={handleLogMeasurement} loading={logMeasurement.isPending} style={{ marginTop: Spacing.base }} />
-            <Button title="Cancel" onPress={() => setShowMeasureModal(false)} variant="ghost" />
+            <Button title={t.save} onPress={handleLogMeasurement} loading={logMeasurement.isPending} style={{ marginTop: Spacing.base }} />
+            <Button title={t.cancel} onPress={() => setShowMeasureModal(false)} variant="ghost" />
           </View>
         </View>
       </Modal>

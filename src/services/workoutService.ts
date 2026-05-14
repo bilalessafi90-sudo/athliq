@@ -177,6 +177,25 @@ export const workoutService = {
     return data ?? [];
   },
 
+  async getLastSessionLogsForDay(userId: string, dayId: string): Promise<ExerciseLog[]> {
+    const { data: session } = await supabase
+      .from('workout_sessions')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('workout_day_id', dayId)
+      .not('completed_at', 'is', null)
+      .order('completed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!session) return [];
+    const { data, error } = await supabase
+      .from('exercise_logs')
+      .select('*, exercise:exercises(name)')
+      .eq('session_id', session.id);
+    if (error) throw error;
+    return data ?? [];
+  },
+
   async getExercisesByMuscle(muscleGroup: string): Promise<Exercise[]> {
     const { data, error } = await supabase
       .from('exercises')

@@ -73,3 +73,13 @@ export function useAllPlans() {
     enabled: !!user?.id,
   });
 }
+
+export function useLastSessionLogs(dayId?: string) {
+  const { user } = useAuthStore();
+  return useQuery({
+    queryKey: ['lastSessionLogs', user?.id, dayId],
+    queryFn: () => workoutService.getLastSessionLogsForDay(user!.id, dayId!),
+    enabled: !!user?.id && !!dayId,
+    staleTime: 0,
+  });
+}

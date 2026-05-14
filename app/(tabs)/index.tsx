@@ -12,9 +12,12 @@ import { useActiveMealPlan } from '../../src/hooks/useNutrition';
 import { Card, Badge, ProgressBar } from '../../src/components/ui';
 import { Colors, Typography, Spacing, Radius, FITNESS_GOALS, PLAN_DURATION_WEEKS } from '../../src/constants';
 import { WorkoutDay } from '../../src/types';
+import { useT } from '../../src/stores/languageStore';
+import { calculateWorkoutDuration } from '../../src/utils/workoutDuration';
 
 export default function HomeScreen() {
   const { profile } = useAuthStore();
+  const t = useT();
   const { data: activePlan, refetch: refetchPlan, isLoading: planLoading } = useActivePlan();
   const { data: planFull, isLoading: daysLoading } = usePlanWithDays(activePlan?.id);
   const { data: sessions = [] } = useRecentSessions(30);
@@ -68,7 +71,7 @@ export default function HomeScreen() {
   // Greeting
   const hour = new Date().getHours();
   const greeting =
-    hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    hour < 12 ? t.goodMorning : hour < 17 ? t.goodAfternoon : t.goodEvening;
 
   const goalInfo = FITNESS_GOALS.find((g) => g.id === profile?.fitness_goal);
 
@@ -102,7 +105,7 @@ export default function HomeScreen() {
 
         {/* ── Stats Row ──────────────────────────────────────────── */}
         <View style={styles.statsRow}>
-          <StatCard icon="🔥" value={String(streak)} label="Day Streak" color={Colors.accent} />
+          <StatCard icon="🔥" value={String(streak)} label={t.streak} color={Colors.accent} />
           <StatCard
             icon="🏋️"
             value={String(sessions.filter((s) => s.completed_at).length)}
@@ -121,7 +124,7 @@ export default function HomeScreen() {
         {/* ── Today's Workout ────────────────────────────────────── */}
         <View style={styles.section}>
           <SectionHeader
-            title={todayWorkout ? "Today's Workout" : 'Next Workout'}
+            title={todayWorkout ? t.todaysWorkout : t.weeklySchedule}
             action="See all"
             onAction={() => router.push('/(tabs)/workout')}
           />
@@ -153,14 +156,14 @@ export default function HomeScreen() {
                     icon="💪"
                     label={`${(nextWorkout as any).workout_exercises?.length ?? '—'} exercises`}
                   />
-                  <MetaPill icon="⏱" label="~45-60 min" />
+                  <MetaPill icon="⏱" label={calculateWorkoutDuration((nextWorkout as any).workout_exercises ?? []).label} />
                 </View>
               </Card>
             </TouchableOpacity>
           ) : (
             <Card style={styles.emptyCard}>
               <Text style={styles.emptyText}>
-                No workout plan yet.{'\n'}Go to the Workout tab to generate one.
+                {t.noActivePlanDesc}
               </Text>
             </Card>
           )}
@@ -169,7 +172,7 @@ export default function HomeScreen() {
         {/* ── Plan Progress ──────────────────────────────────────── */}
         {activePlan && (
           <View style={styles.section}>
-            <SectionHeader title="Program Progress" />
+            <SectionHeader title={t.planProgress} />
             <Card>
               <View style={styles.planRow}>
                 <View style={{ flex: 1 }}>
@@ -187,7 +190,7 @@ export default function HomeScreen() {
 
         {/* ── This Week's Workouts ───────────────────────────────── */}
         <View style={styles.section}>
-          <SectionHeader title="This Week" />
+          <SectionHeader title={t.weeklySchedule} />
           <View style={styles.weekRow}>
             {sortedDays.map((day) => {
               const isTodays = day.day_of_week === todayName;
@@ -221,7 +224,7 @@ export default function HomeScreen() {
         {mealPlan && (
           <View style={styles.section}>
             <SectionHeader
-              title="Today's Nutrition"
+              title={t.todaysMacros}
               action="Full Plan"
               onAction={() => router.push('/(tabs)/nutrition')}
             />

@@ -5,9 +5,10 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useWorkoutStore } from '../../src/stores/workoutStore';
-import { useCompleteSession } from '../../src/hooks/useWorkout';
+import { useCompleteSession, useLastSessionLogs } from '../../src/hooks/useWorkout';
 import { workoutService } from '../../src/services/workoutService';
 import { useAuthStore } from '../../src/stores/authStore';
+import { useT } from '../../src/stores/languageStore';
 import { Colors, Typography, Spacing, Radius } from '../../src/constants';
 import { ActiveSet } from '../../src/types';
 import { ProgressBar } from '../../src/components/ui';
@@ -19,36 +20,44 @@ export default function ActiveWorkoutScreen() {
   } = useWorkoutStore();
   const { user, profile } = useAuthStore();
   const completeSessionMutation = useCompleteSession();
+  const t = useT();
 
+  const startRef = useRef<number>(Date.now());
   const [elapsed, setElapsed] = useState(0);
-  const [restTimer, setRestTimer] = useState<number | null>(null);
-  const [restActive, setRestActive] = useState(false);
+  const [restDisplay, setRestDisplay] = useState<number | null>(null);
+  const restEndTimeRef = useRef<number | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const restRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Elapsed timer
+  const currentEx = activeExercises[currentExerciseIndex];
+  const we = currentEx?.workoutExercise;
+
+  // Fetch previous session logs for this workout day
+  const { data: prevLogs = [] } = useLastSessionLogs(activeDay?.id);
+
+  // Build a map: exercise_id + '_' + setNumber -> {weight, reps}
+  const prevLogsMap: Record<string, { weight: number; reps: number }> = {};
+  for (const log of prevLogs) {
+    const key = `${log.exercise_id}_${log.set_number}`;
+    prevLogsMap[key] = { weight: log.weight, reps: log.reps };
+  }
+
+  // Single interval: drives elapsed timer and rest countdown
   useEffect(() => {
-    intervalRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+    intervalRef.current = setInterval(() => {
+      const nowElapsed = Math.round((Date.now() - startRef.current) / 1000);
+      setElapsed(nowElapsed);
+
+      if (restEndTimeRef.current !== null) {
+        const remaining = Math.max(0, Math.round((restEndTimeRef.current - Date.now()) / 1000));
+        setRestDisplay(remaining);
+        if (remaining === 0) {
+          restEndTimeRef.current = null;
+          if (Platform.OS !== 'web') Vibration.vibrate([0, 300, 100, 300]);
+        }
+      }
+    }, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []);
-
-  // Rest timer countdown
-  useEffect(() => {
-    if (restActive && restTimer !== null && restTimer > 0) {
-      restRef.current = setInterval(() => {
-        setRestTimer((t) => {
-          if (t !== null && t <= 1) {
-            clearInterval(restRef.current!);
-            setRestActive(false);
-            if (Platform.OS !== 'web') Vibration.vibrate([0, 300, 100, 300]);
-            return null;
-          }
-          return (t ?? 0) - 1;
-        });
-      }, 1000);
-    }
-    return () => { if (restRef.current) clearInterval(restRef.current); };
-  }, [restActive]);
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, '0');
@@ -56,8 +65,6 @@ export default function ActiveWorkoutScreen() {
     return `${m}:${s}`;
   };
 
-  const currentEx = activeExercises[currentExerciseIndex];
-  const we = currentEx?.workoutExercise;
   const ex = (we as any)?.exercise;
   const sets = currentEx?.sets ?? [];
 
@@ -70,21 +77,25 @@ export default function ActiveWorkoutScreen() {
 
   const handleSetComplete = (setIdx: number) => {
     const set = sets[setIdx];
-    if (!set.reps || !set.weight) {
-      Alert.alert('Missing Data', 'Please enter reps and weight before marking complete.');
+    if (!set.reps) {
+      Alert.alert('Missing Data', `Please enter ${t.enterReps} before marking complete.`);
       return;
     }
     completeSet(currentExerciseIndex, setIdx);
     // Start rest timer
     const restSecs = we?.rest_seconds ?? 60;
-    setRestTimer(restSecs);
-    setRestActive(true);
-    if (restRef.current) clearInterval(restRef.current);
+    restEndTimeRef.current = Date.now() + restSecs * 1000;
+    setRestDisplay(restSecs);
+  };
+
+  const handleSkipRest = () => {
+    restEndTimeRef.current = null;
+    setRestDisplay(null);
   };
 
   const handleFinish = () => {
     Alert.alert(
-      'Finish Workout?',
+      t.finishWorkout,
       'Are you sure you want to end this session?',
       [
         { text: 'Keep Going', style: 'cancel' },
@@ -104,13 +115,13 @@ export default function ActiveWorkoutScreen() {
       const logs: any[] = [];
       for (const ae of activeExercises) {
         for (const set of ae.sets) {
-          if (set.completed && set.reps != null && set.weight != null) {
+          if (set.completed && set.reps != null) {
             logs.push({
               session_id: activeSession.id,
               exercise_id: ae.workoutExercise.exercise_id,
               set_number: set.setNumber,
               reps: set.reps,
-              weight: set.weight,
+              weight: set.weight ?? 0,
               unit: profile?.weight_unit ?? 'kg',
             });
           }
@@ -138,12 +149,14 @@ export default function ActiveWorkoutScreen() {
     );
   }
 
+  const restActive = restDisplay !== null && restDisplay > 0;
+
   return (
     <SafeAreaView style={styles.root}>
       {/* ── Top Bar ──────────────────────────────────────────────── */}
       <View style={styles.topBar}>
         <TouchableOpacity onPress={handleFinish} style={styles.finishBtn}>
-          <Text style={styles.finishText}>✕ Finish</Text>
+          <Text style={styles.finishText}>✕ {t.finishWorkout}</Text>
         </TouchableOpacity>
         <View style={styles.timerWrap}>
           <Text style={styles.timer}>{formatTime(elapsed)}</Text>
@@ -157,14 +170,11 @@ export default function ActiveWorkoutScreen() {
       <ProgressBar progress={overallProgress} color={Colors.primary} height={3} animated />
 
       {/* ── Rest Timer ───────────────────────────────────────────── */}
-      {restActive && restTimer !== null && (
+      {restDisplay !== null && restDisplay > 0 && (
         <View style={styles.restBanner}>
           <Text style={styles.restIcon}>⏱</Text>
-          <Text style={styles.restText}>Rest  {formatTime(restTimer)}</Text>
-          <TouchableOpacity
-            onPress={() => { setRestActive(false); setRestTimer(null); if (restRef.current) clearInterval(restRef.current); }}
-            style={styles.skipRest}
-          >
+          <Text style={styles.restText}>{t.rest}  {formatTime(restDisplay)}</Text>
+          <TouchableOpacity onPress={handleSkipRest} style={styles.skipRest}>
             <Text style={styles.skipRestText}>Skip</Text>
           </TouchableOpacity>
         </View>
@@ -176,36 +186,42 @@ export default function ActiveWorkoutScreen() {
           <Text style={styles.exName}>{ex?.name ?? 'Exercise'}</Text>
           <Text style={styles.exMuscles}>{ex?.muscle_groups?.join(' · ')}</Text>
           <Text style={styles.exTarget}>
-            Target: {we?.sets} sets × {we?.reps} reps · {we?.rest_seconds}s rest
+            Target: {we?.sets} {t.sets} × {we?.reps} {t.reps} · {we?.rest_seconds}s {t.rest}
           </Text>
         </View>
 
         {/* ── Set Logger ──────────────────────────────────────────── */}
         <View style={styles.setsSection}>
           <View style={styles.setsHeader}>
-            <Text style={[styles.col, { flex: 0.5 }]}>SET</Text>
-            <Text style={[styles.col, { flex: 1 }]}>WEIGHT ({profile?.weight_unit ?? 'kg'})</Text>
-            <Text style={[styles.col, { flex: 1 }]}>REPS</Text>
-            <Text style={[styles.col, { flex: 0.8 }]}>DONE</Text>
+            <Text style={[styles.col, { flex: 0.5 }]}>{t.sets.toUpperCase()}</Text>
+            <Text style={[styles.col, { flex: 1 }]}>{t.enterWeight} ({profile?.weight_unit ?? 'kg'})</Text>
+            <Text style={[styles.col, { flex: 1 }]}>{t.enterReps}</Text>
+            <Text style={[styles.col, { flex: 0.8 }]}>{t.setComplete}</Text>
           </View>
 
-          {sets.map((set, i) => (
-            <SetRow
-              key={i}
-              set={set}
-              index={i}
-              unit={profile?.weight_unit ?? 'kg'}
-              onWeightChange={(v) => updateSet(currentExerciseIndex, i, 'weight', parseFloat(v) || 0)}
-              onRepsChange={(v) => updateSet(currentExerciseIndex, i, 'reps', parseInt(v) || 0)}
-              onComplete={() => handleSetComplete(i)}
-            />
-          ))}
+          {sets.map((set, i) => {
+            const prevKey = `${we?.exercise_id}_${set.setNumber}`;
+            const prev = prevLogsMap[prevKey];
+            return (
+              <SetRow
+                key={i}
+                set={set}
+                index={i}
+                unit={profile?.weight_unit ?? 'kg'}
+                prevWeight={prev?.weight}
+                prevReps={prev?.reps}
+                onWeightChange={(v) => updateSet(currentExerciseIndex, i, 'weight', parseFloat(v) || 0)}
+                onRepsChange={(v) => updateSet(currentExerciseIndex, i, 'reps', parseInt(v) || 0)}
+                onComplete={() => handleSetComplete(i)}
+              />
+            );
+          })}
         </View>
 
         {/* ── Exercise Notes ───────────────────────────────────────── */}
         {ex?.instructions && (
           <View style={styles.instructions}>
-            <Text style={styles.instructionsTitle}>How to perform</Text>
+            <Text style={styles.instructionsTitle}>{t.howToPerform}</Text>
             <Text style={styles.instructionsText}>{ex.instructions}</Text>
           </View>
         )}
@@ -222,7 +238,7 @@ export default function ActiveWorkoutScreen() {
         </TouchableOpacity>
 
         <View style={styles.setProgress}>
-          <Text style={styles.setProgressText}>{completedSets}/{totalSets} sets done</Text>
+          <Text style={styles.setProgressText}>{completedSets}/{totalSets} {t.sets.toLowerCase()} done</Text>
         </View>
 
         {currentExerciseIndex < activeExercises.length - 1 ? (
@@ -245,18 +261,20 @@ interface SetRowProps {
   set: ActiveSet;
   index: number;
   unit: string;
+  prevWeight?: number;
+  prevReps?: number;
   onWeightChange: (v: string) => void;
   onRepsChange: (v: string) => void;
   onComplete: () => void;
 }
 
-function SetRow({ set, index, unit, onWeightChange, onRepsChange, onComplete }: SetRowProps) {
+function SetRow({ set, index, unit, prevWeight, prevReps, onWeightChange, onRepsChange, onComplete }: SetRowProps) {
   return (
     <View style={[sr.row, set.completed && sr.rowDone]}>
       <Text style={[sr.col, { flex: 0.5, color: Colors.textSecondary, fontWeight: '700' }]}>
         {index + 1}
       </Text>
-      <View style={[sr.col, { flex: 1 }]}>
+      <View style={[sr.col, { flex: 1, flexDirection: 'column', alignItems: 'center' }]}>
         <TextInput
           style={[sr.input, set.completed && sr.inputDone]}
           value={set.weight != null ? String(set.weight) : ''}
@@ -266,8 +284,11 @@ function SetRow({ set, index, unit, onWeightChange, onRepsChange, onComplete }: 
           keyboardType="decimal-pad"
           editable={!set.completed}
         />
+        {prevWeight != null && prevReps != null && (
+          <Text style={sr.prevHint}>Prev: {prevWeight} × {prevReps}</Text>
+        )}
       </View>
-      <View style={[sr.col, { flex: 1 }]}>
+      <View style={[sr.col, { flex: 1, flexDirection: 'column', alignItems: 'center' }]}>
         <TextInput
           style={[sr.input, set.completed && sr.inputDone]}
           value={set.reps != null ? String(set.reps) : ''}
@@ -340,4 +361,5 @@ const sr = StyleSheet.create({
   doneBtnActive: { backgroundColor: Colors.accentGreen, borderColor: Colors.accentGreen },
   doneBtnText: { color: Colors.textMuted, fontSize: 16 },
   doneBtnTextActive: { color: Colors.white, fontWeight: '700' },
+  prevHint: { fontSize: 9, color: Colors.textMuted, marginTop: 2 },
 });

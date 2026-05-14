@@ -11,6 +11,7 @@ import { calculateCalorieTarget } from '../../src/utils/workoutGenerator';
 import { Card, MacroRing, Badge, Button } from '../../src/components/ui';
 import { Colors, Typography, Spacing, Radius, DAYS_OF_WEEK, FITNESS_GOALS } from '../../src/constants';
 import { Meal, MealType, DayOfWeek } from '../../src/types';
+import { useT } from '../../src/stores/languageStore';
 
 type View2 = 'plan' | 'grocery';
 
@@ -21,6 +22,7 @@ const MEAL_ICONS: Record<MealType, string> = {
 
 export default function NutritionScreen() {
   const { user, profile } = useAuthStore();
+  const t = useT();
   const [view, setView] = useState<View2>('plan');
   const [selectedDay, setSelectedDay] = useState<DayOfWeek>(DAYS_OF_WEEK[0]);
   const [generating, setGenerating] = useState(false);
@@ -120,7 +122,7 @@ export default function NutritionScreen() {
         {(['plan', 'grocery'] as View2[]).map((v) => (
           <TouchableOpacity key={v} onPress={() => setView(v)} style={[styles.toggleBtn, view === v && styles.toggleBtnActive]}>
             <Text style={[styles.toggleText, view === v && styles.toggleTextActive]}>
-              {v === 'plan' ? '🗓 Meal Plan' : '🛒 Grocery List'}
+              {v === 'plan' ? `🗓 ${t.weeklyMealPlan}` : `🛒 ${t.groceryList}`}
             </Text>
           </TouchableOpacity>
         ))}
@@ -236,6 +238,13 @@ export default function NutritionScreen() {
 // ─── Meal Card ────────────────────────────────────────────────────────────────
 
 function MealCard({ meal, expanded, onToggle }: { meal: Meal; expanded: boolean; onToggle: () => void }) {
+  const t = useT();
+  const mealTypeLabel: Record<MealType, string> = {
+    breakfast: t.breakfast,
+    lunch: t.lunch,
+    dinner: t.dinner,
+    snack: t.snack,
+  };
   return (
     <TouchableOpacity activeOpacity={0.85} onPress={onToggle} style={{ marginBottom: Spacing.md }}>
       <Card>
@@ -244,7 +253,7 @@ function MealCard({ meal, expanded, onToggle }: { meal: Meal; expanded: boolean;
             <Text style={mc.icon}>{MEAL_ICONS[meal.meal_type]}</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={mc.mealType}>{meal.meal_type.charAt(0).toUpperCase() + meal.meal_type.slice(1)}</Text>
+            <Text style={mc.mealType}>{mealTypeLabel[meal.meal_type]}</Text>
             <Text style={mc.mealName}>{meal.name}</Text>
             <Text style={mc.mealDesc} numberOfLines={expanded ? undefined : 1}>{meal.description}</Text>
           </View>
@@ -263,12 +272,12 @@ function MealCard({ meal, expanded, onToggle }: { meal: Meal; expanded: boolean;
         {/* Expanded: ingredients + instructions */}
         {expanded && (
           <View style={mc.details}>
-            <Text style={mc.detailTitle}>Ingredients</Text>
+            <Text style={mc.detailTitle}>{t.ingredients}</Text>
             {meal.ingredients.map((ing, i) => (
               <Text key={i} style={mc.ingredient}>• {ing}</Text>
             ))}
 
-            <Text style={[mc.detailTitle, { marginTop: Spacing.md }]}>Instructions</Text>
+            <Text style={[mc.detailTitle, { marginTop: Spacing.md }]}>{t.instructions}</Text>
             {meal.instructions.map((step, i) => (
               <View key={i} style={mc.step}>
                 <View style={mc.stepNum}><Text style={mc.stepNumText}>{i + 1}</Text></View>

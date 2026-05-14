@@ -100,13 +100,9 @@ export const progressService = {
       .upload(fileName, blob, { contentType: `image/${ext}` });
     if (uploadError) throw uploadError;
 
-    const { data: urlData } = supabase.storage
-      .from('progress-photos')
-      .getPublicUrl(fileName);
-
     const { data, error } = await supabase
       .from('progress_photos')
-      .insert({ user_id: userId, photo_url: urlData.publicUrl, notes })
+      .insert({ user_id: userId, photo_url: fileName, notes })
       .select()
       .single();
     if (error) throw error;
@@ -120,7 +116,25 @@ export const progressService = {
       .eq('user_id', userId)
       .order('logged_at', { ascending: false });
     if (error) throw error;
-    return data ?? [];
+
+    const rows = data ?? [];
+    if (rows.length === 0) return rows;
+
+    // Resolve storage paths, handling legacy rows that already have a full URL
+    const paths = rows.map((p) =>
+      p.photo_url.startsWith('http')
+        ? (p.photo_url.match(/progress-photos\/(.+)$/)?.[1] ?? p.photo_url)
+        : p.photo_url,
+    );
+
+    const { data: signed } = await supabase.storage
+      .from('progress-photos')
+      .createSignedUrls(paths, 3600);
+
+    return rows.map((p, i) => ({
+      ...p,
+      photo_url: signed?.[i]?.signedUrl ?? p.photo_url,
+    }));
   },
 
   async deleteProgressPhoto(photoId: string): Promise<void> {
