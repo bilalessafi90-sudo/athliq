@@ -14,7 +14,7 @@ import { translateExercise } from '../../src/i18n/exerciseTranslations';
 import { Colors, Typography, Spacing, Radius } from '../../src/constants';
 import { ActiveSet } from '../../src/types';
 import { ProgressBar } from '../../src/components/ui';
-import { getExerciseType, formatSetValue, ExerciseType } from '../../src/utils/exerciseType';
+import { getExerciseType, formatSetValue, parseTargetDefault, ExerciseType } from '../../src/utils/exerciseType';
 
 export default function ActiveWorkoutScreen() {
   const {
@@ -34,6 +34,17 @@ export default function ActiveWorkoutScreen() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Holds the ID of the scheduled "rest complete" notification so we can cancel it.
   const restNotifIdRef = useRef<string | null>(null);
+
+  // ── Exercise timer (for time-based exercises) ─────────────────────────
+  // Status drives button label; remaining drives the display.
+  // Refs are used inside the interval closure to avoid stale state.
+  const [exTimerStatus, setExTimerStatus] = useState<'idle' | 'running' | 'paused'>('idle');
+  const [exTimerRemaining, setExTimerRemaining] = useState(0);
+  const [exTimerSetIdx, setExTimerSetIdx] = useState(0);
+  const exTimerStatusRef = useRef<'idle' | 'running' | 'paused'>('idle');
+  const exTimerEndRef    = useRef<number | null>(null);   // absolute end ms when running
+  const exTimerTargetRef = useRef(0);                     // total seconds for this exercise
+  const exTimerRemainingRef = useRef(0);                  // updated every tick
 
   const currentEx = activeExercises[currentExerciseIndex];
   const we = currentEx?.workoutExercise;
@@ -120,9 +131,34 @@ export default function ActiveWorkoutScreen() {
           if (Platform.OS !== 'web') Vibration.vibrate([0, 300, 100, 300]);
         }
       }
+
+      // Exercise countdown (only ticks when running)
+      if (exTimerStatusRef.current === 'running' && exTimerEndRef.current !== null) {
+        const rem = Math.max(0, Math.round((exTimerEndRef.current - Date.now()) / 1000));
+        if (rem !== exTimerRemainingRef.current) {
+          exTimerRemainingRef.current = rem;
+          setExTimerRemaining(rem);
+        }
+        // Auto-complete hook point — wired up in Step 2
+      }
     }, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [cancelRestNotif]);
+
+  // ── Reset exercise timer whenever the active exercise changes ──────────
+  useEffect(() => {
+    const target = Math.max(parseTargetDefault(we?.reps ?? ''), 5);
+    exTimerTargetRef.current    = target;
+    exTimerRemainingRef.current = target;
+    exTimerEndRef.current       = null;
+    exTimerStatusRef.current    = 'idle';
+    setExTimerStatus('idle');
+    setExTimerRemaining(target);
+    // Start from the first incomplete set
+    const idx = (activeExercises[currentExerciseIndex]?.sets ?? [])
+      .findIndex((s) => !s.completed);
+    setExTimerSetIdx(idx >= 0 ? idx : 0);
+  }, [currentExerciseIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, '0');
@@ -155,6 +191,41 @@ export default function ActiveWorkoutScreen() {
   const overallProgress = totalCompletedSets / totalAllSets;
   const pct = Math.round(overallProgress * 100);
 
+  // ── Exercise timer handlers ─────────────────────────────────────────────
+  const handleStartExTimer = () => {
+    // If we've reached 0, restart from full target
+    if (exTimerRemainingRef.current <= 0) {
+      exTimerRemainingRef.current = exTimerTargetRef.current;
+      setExTimerRemaining(exTimerTargetRef.current);
+    }
+    exTimerEndRef.current    = Date.now() + exTimerRemainingRef.current * 1000;
+    exTimerStatusRef.current = 'running';
+    setExTimerStatus('running');
+  };
+
+  const handlePauseExTimer = () => {
+    exTimerEndRef.current    = null;
+    exTimerStatusRef.current = 'paused';
+    setExTimerStatus('paused');
+    // exTimerRemainingRef already holds the correct value from the last tick
+  };
+
+  const handleResetExTimer = () => {
+    exTimerEndRef.current       = null;
+    exTimerStatusRef.current    = 'idle';
+    exTimerRemainingRef.current = exTimerTargetRef.current;
+    setExTimerStatus('idle');
+    setExTimerRemaining(exTimerTargetRef.current);
+  };
+
+  // Advance the active-set pointer to the next incomplete set after one finishes.
+  const advanceExTimerSet = (completedIdx: number) => {
+    const nextIdx = sets.findIndex((s, i) => i > completedIdx && !s.completed);
+    const newIdx  = nextIdx >= 0 ? nextIdx : completedIdx;
+    setExTimerSetIdx(newIdx);
+    handleResetExTimer();
+  };
+
   const handleToggleSet = (setIdx: number) => {
     const set = sets[setIdx];
 
@@ -166,13 +237,28 @@ export default function ActiveWorkoutScreen() {
       return;
     }
 
-    // Mark as complete — reps / duration are required.
-    if (!set.reps) {
-      const label = isTimeBased ? t.duration : t.enterReps;
-      Alert.alert('Missing Data', `Please enter ${label} before marking complete.`);
+    // For time-based: auto-fill duration from the timer so the user never has
+    // to type seconds manually. We use elapsed time (target − remaining); fall
+    // back to the full target if the timer was never started.
+    if (isTimeBased && (set.reps == null || set.reps === 0)) {
+      const elapsed = exTimerTargetRef.current - exTimerRemainingRef.current;
+      const duration = elapsed > 0 ? elapsed : exTimerTargetRef.current;
+      updateSet(currentExerciseIndex, setIdx, 'reps', duration);
+    }
+
+    // For reps-based: still require a value.
+    if (!isTimeBased && !set.reps) {
+      Alert.alert('Missing Data', `Please enter ${t.enterReps} before marking complete.`);
       return;
     }
+
     completeSet(currentExerciseIndex, setIdx);
+
+    // For time-based: stop the exercise timer and advance to the next set.
+    if (isTimeBased) {
+      advanceExTimerSet(setIdx);
+    }
+
     // Start rest timer
     const restSecs = we?.rest_seconds ?? 60;
     const endTimeMs = Date.now() + restSecs * 1000;
@@ -307,40 +393,61 @@ export default function ActiveWorkoutScreen() {
           <Text style={styles.exName}>{exT.name || 'Exercise'}</Text>
           <Text style={styles.exMuscles}>{ex?.muscle_groups?.join(' · ')}</Text>
           <Text style={styles.exTarget}>
-            Target: {we?.sets} {t.sets} × {we?.reps} {t.reps} · {we?.rest_seconds}s {t.rest}
+            {isTimeBased
+              ? `Target: ${we?.sets} ${t.sets} × ${we?.reps} · ${we?.rest_seconds}s ${t.rest}`
+              : `Target: ${we?.sets} ${t.sets} × ${we?.reps} ${t.reps} · ${we?.rest_seconds}s ${t.rest}`}
           </Text>
         </View>
 
-        {/* ── Set Logger ──────────────────────────────────────────── */}
-        <View style={styles.setsSection}>
-          <View style={styles.setsHeader}>
-            <Text style={[styles.col, { flex: 0.5 }]}>{t.sets.toUpperCase()}</Text>
-            <Text style={[styles.col, { flex: 1 }]}>{t.enterWeight} ({profile?.weight_unit ?? 'kg'})</Text>
-            <Text style={[styles.col, { flex: 1 }]}>
-              {isTimeBased ? `⏱ ${t.duration} (${t.seconds})` : t.enterReps}
-            </Text>
-            <Text style={[styles.col, { flex: 0.8 }]}>{t.setComplete}</Text>
+        {/* ── Set Logger (reps) or Timer Panel (time-based) ───────── */}
+        {isTimeBased ? (
+          <>
+            <ExerciseTimerPanel
+              remaining={exTimerRemaining}
+              target={exTimerTargetRef.current}
+              status={exTimerStatus}
+              setIdx={exTimerSetIdx}
+              totalSets={sets.length}
+              onStart={handleStartExTimer}
+              onPause={handlePauseExTimer}
+              onReset={handleResetExTimer}
+            />
+            <SetStatusRows
+              sets={sets}
+              activeSetIdx={exTimerSetIdx}
+              unit={profile?.weight_unit ?? 'kg'}
+              onWeightChange={(i, v) => updateSet(currentExerciseIndex, i, 'weight', parseFloat(v) || 0)}
+              onToggle={(i) => handleToggleSet(i)}
+            />
+          </>
+        ) : (
+          <View style={styles.setsSection}>
+            <View style={styles.setsHeader}>
+              <Text style={[styles.col, { flex: 0.5 }]}>{t.sets.toUpperCase()}</Text>
+              <Text style={[styles.col, { flex: 1 }]}>{t.enterWeight} ({profile?.weight_unit ?? 'kg'})</Text>
+              <Text style={[styles.col, { flex: 1 }]}>{t.enterReps}</Text>
+              <Text style={[styles.col, { flex: 0.8 }]}>{t.setComplete}</Text>
+            </View>
+            {sets.map((set, i) => {
+              const prevKey = `${we?.exercise_id}_${set.setNumber}`;
+              const prev = prevLogsMap[prevKey];
+              return (
+                <SetRow
+                  key={i}
+                  set={set}
+                  index={i}
+                  exerciseType={exerciseType}
+                  unit={profile?.weight_unit ?? 'kg'}
+                  prevWeight={prev?.weight}
+                  prevReps={prev?.reps}
+                  onWeightChange={(v) => updateSet(currentExerciseIndex, i, 'weight', parseFloat(v) || 0)}
+                  onRepsChange={(v) => updateSet(currentExerciseIndex, i, 'reps', parseInt(v) || 0)}
+                  onToggle={() => handleToggleSet(i)}
+                />
+              );
+            })}
           </View>
-
-          {sets.map((set, i) => {
-            const prevKey = `${we?.exercise_id}_${set.setNumber}`;
-            const prev = prevLogsMap[prevKey];
-            return (
-              <SetRow
-                key={i}
-                set={set}
-                index={i}
-                exerciseType={exerciseType}
-                unit={profile?.weight_unit ?? 'kg'}
-                prevWeight={prev?.weight}
-                prevReps={prev?.reps}
-                onWeightChange={(v) => updateSet(currentExerciseIndex, i, 'weight', parseFloat(v) || 0)}
-                onRepsChange={(v) => updateSet(currentExerciseIndex, i, 'reps', parseInt(v) || 0)}
-                onToggle={() => handleToggleSet(i)}
-              />
-            );
-          })}
-        </View>
+        )}
 
         {/* ── Exercise Notes ───────────────────────────────────────── */}
         {exT.instructions ? (
@@ -477,6 +584,141 @@ function SetRow({
   );
 }
 
+// ─── Exercise Timer Panel ─────────────────────────────────────────────────────
+
+interface ExerciseTimerPanelProps {
+  remaining: number;
+  target: number;
+  status: 'idle' | 'running' | 'paused';
+  setIdx: number;
+  totalSets: number;
+  onStart: () => void;
+  onPause: () => void;
+  onReset: () => void;
+}
+
+function ExerciseTimerPanel({
+  remaining, target, status, setIdx, totalSets, onStart, onPause, onReset,
+}: ExerciseTimerPanelProps) {
+  const progress  = target > 0 ? 1 - remaining / target : 0;
+  const isUrgent  = status === 'running' && remaining <= 10 && remaining > 0;
+  const mm = Math.floor(remaining / 60).toString().padStart(2, '0');
+  const ss = (remaining % 60).toString().padStart(2, '0');
+
+  return (
+    <View style={[tp.card, isUrgent && tp.cardUrgent]}>
+      {/* Set indicator */}
+      <View style={tp.topRow}>
+        <Text style={tp.setLabel}>Set {setIdx + 1} of {totalSets}</Text>
+        <View style={tp.dots}>
+          {Array.from({ length: totalSets }).map((_, i) => (
+            <View key={i} style={[tp.dot, i === setIdx && tp.dotActive]} />
+          ))}
+        </View>
+      </View>
+
+      {/* Big countdown */}
+      <Text style={[tp.countdown, isUrgent && tp.countdownUrgent]}>
+        {mm}:{ss}
+      </Text>
+
+      {/* Shrinking progress bar */}
+      <View style={tp.barWrap}>
+        <ProgressBar
+          progress={progress}
+          color={isUrgent ? Colors.error : Colors.primary}
+          height={8}
+          animated
+        />
+      </View>
+      <Text style={tp.targetLabel}>
+        Target: {formatSetValue(target, 'time')}
+      </Text>
+
+      {/* Controls */}
+      <View style={tp.controls}>
+        <TouchableOpacity onPress={onReset} style={tp.resetBtn}>
+          <Text style={tp.resetText}>↺  Reset</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={status === 'running' ? onPause : onStart}
+          style={[tp.startBtn, status === 'running' && tp.pauseActiveBtn]}
+        >
+          <Text style={tp.startText}>
+            {status === 'running' ? '⏸  Pause' : status === 'paused' ? '▶  Resume' : '▶  Start'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+// ─── Set Status Rows (time-based) ─────────────────────────────────────────────
+
+interface SetStatusRowsProps {
+  sets: ActiveSet[];
+  activeSetIdx: number;
+  unit: string;
+  onWeightChange: (setIdx: number, v: string) => void;
+  onToggle: (setIdx: number) => void;
+}
+
+function SetStatusRows({ sets, activeSetIdx, unit, onWeightChange, onToggle }: SetStatusRowsProps) {
+  return (
+    <View style={ssr.container}>
+      {sets.map((set, i) => (
+        <View
+          key={i}
+          style={[
+            ssr.row,
+            i === activeSetIdx && ssr.rowActive,
+            set.completed && ssr.rowDone,
+          ]}
+        >
+          {/* Set number */}
+          <Text style={[ssr.setNum, set.completed && ssr.setNumDone]}>{i + 1}</Text>
+
+          {/* Optional weight input */}
+          <View style={ssr.weightWrap}>
+            <TextInput
+              style={[ssr.weightInput, set.completed && ssr.weightInputDone]}
+              value={set.weight != null && set.weight > 0 ? String(set.weight) : ''}
+              onChangeText={(v) => onWeightChange(i, v)}
+              placeholder={`0 ${unit}`}
+              placeholderTextColor={Colors.textMuted}
+              keyboardType="decimal-pad"
+            />
+          </View>
+
+          {/* Duration logged (when done) or status indicator */}
+          <View style={ssr.durationWrap}>
+            {set.completed && set.reps != null ? (
+              <Text style={ssr.durationDone}>{formatSetValue(set.reps, 'time')}</Text>
+            ) : (
+              <Text style={[ssr.statusText, i === activeSetIdx && ssr.statusTextActive]}>
+                {i === activeSetIdx ? 'Active' : '—'}
+              </Text>
+            )}
+          </View>
+
+          {/* Done toggle */}
+          <TouchableOpacity
+            onPress={() => onToggle(i)}
+            style={[ssr.doneBtn, set.completed && ssr.doneBtnDone]}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[ssr.doneBtnText, set.completed && ssr.doneBtnTextDone]}>
+              {set.completed ? '✓' : '○'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.base },
@@ -606,4 +848,112 @@ const sr = StyleSheet.create({
   undoHint: { fontSize: 8, color: Colors.accentGreen, marginTop: 2, opacity: 0.7, letterSpacing: 0.3 },
 
   prevHint: { fontSize: 9, color: Colors.textMuted, marginTop: 2 },
+});
+
+// ─── Timer Panel Styles ───────────────────────────────────────────────────────
+
+const tp = StyleSheet.create({
+  card: {
+    backgroundColor: Colors.card,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: Spacing.xl,
+    marginBottom: Spacing.base,
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  cardUrgent: {
+    borderColor: Colors.error + '88',
+    backgroundColor: Colors.error + '08',
+  },
+
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' },
+  setLabel: { fontSize: Typography.sizes.sm, color: Colors.textMuted, fontWeight: Typography.weights.semibold },
+  dots: { flexDirection: 'row', gap: 6 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.border },
+  dotActive: { backgroundColor: Colors.primary, width: 20, borderRadius: 4 },
+
+  countdown: {
+    fontSize: 72,
+    fontWeight: Typography.weights.extrabold,
+    color: Colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -2,
+    lineHeight: 80,
+  },
+  countdownUrgent: { color: Colors.error },
+
+  barWrap: { width: '100%' },
+  targetLabel: { fontSize: Typography.sizes.xs, color: Colors.textMuted },
+
+  controls: { flexDirection: 'row', gap: Spacing.md, width: '100%', marginTop: Spacing.sm },
+  resetBtn: {
+    flex: 1,
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.base,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  resetText: { color: Colors.textSecondary, fontSize: Typography.sizes.sm, fontWeight: Typography.weights.semibold },
+  startBtn: {
+    flex: 2,
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.base,
+    alignItems: 'center',
+  },
+  pauseActiveBtn: { backgroundColor: Colors.primary + 'CC' },
+  startText: { color: Colors.white, fontSize: Typography.sizes.base, fontWeight: Typography.weights.bold },
+});
+
+// ─── Set Status Rows Styles ───────────────────────────────────────────────────
+
+const ssr = StyleSheet.create({
+  container: {
+    backgroundColor: Colors.card,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    overflow: 'hidden',
+    marginBottom: Spacing.xl,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: Spacing.md,
+  },
+  rowActive: { backgroundColor: Colors.primary + '0A' },
+  rowDone:   { backgroundColor: Colors.accentGreen + '0A' },
+
+  setNum:     { fontSize: Typography.sizes.md, fontWeight: Typography.weights.bold, color: Colors.textSecondary, width: 20, textAlign: 'center' },
+  setNumDone: { color: Colors.accentGreen },
+
+  weightWrap: { flex: 1 },
+  weightInput: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: Radius.sm,
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+  },
+  weightInputDone: { color: Colors.accentGreen, backgroundColor: Colors.accentGreen + '15' },
+
+  durationWrap:  { flex: 1, alignItems: 'center' },
+  durationDone:  { fontSize: Typography.sizes.base, fontWeight: Typography.weights.bold, color: Colors.accentGreen, fontVariant: ['tabular-nums'] },
+  statusText:    { fontSize: Typography.sizes.sm, color: Colors.textMuted },
+  statusTextActive: { color: Colors.primary, fontWeight: Typography.weights.semibold },
+
+  doneBtn:      { width: 34, height: 34, borderRadius: Radius.full, borderWidth: 2, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  doneBtnDone:  { backgroundColor: Colors.accentGreen, borderColor: Colors.accentGreen },
+  doneBtnText:  { color: Colors.textMuted, fontSize: 15 },
+  doneBtnTextDone: { color: Colors.white, fontWeight: '700' },
 });
