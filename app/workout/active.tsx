@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   SafeAreaView, Alert, TextInput, Vibration, Platform,
 } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { useWorkoutStore } from '../../src/stores/workoutStore';
 import { useCompleteSession, useLastSessionLogs } from '../../src/hooks/useWorkout';
@@ -29,6 +30,8 @@ export default function ActiveWorkoutScreen() {
   const [restDisplay, setRestDisplay] = useState<number | null>(null);
   const restEndTimeRef = useRef<number | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Holds the ID of the scheduled "rest complete" notification so we can cancel it.
+  const restNotifIdRef = useRef<string | null>(null);
 
   const currentEx = activeExercises[currentExerciseIndex];
   const we = currentEx?.workoutExercise;
@@ -43,7 +46,62 @@ export default function ActiveWorkoutScreen() {
     prevLogsMap[key] = { weight: log.weight, reps: log.reps };
   }
 
-  // Single interval: drives elapsed timer and rest countdown
+  // ── Notification permission + Android channel setup ────────────────────
+  useEffect(() => {
+    const setup = async () => {
+      await Notifications.requestPermissionsAsync().catch(() => {});
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('rest-timer', {
+          name: 'Rest Timer',
+          importance: Notifications.AndroidImportance.HIGH,
+          vibrationPattern: [0, 300, 100, 300],
+          sound: 'default',
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        }).catch(() => {});
+      }
+    };
+    setup();
+    // Cancel any leftover notification when the workout screen unmounts
+    return () => {
+      if (restNotifIdRef.current) {
+        Notifications.cancelScheduledNotificationAsync(restNotifIdRef.current).catch(() => {});
+        restNotifIdRef.current = null;
+      }
+    };
+  }, []);
+
+  // ── Helpers: schedule / cancel the lock-screen notification ────────────
+  const cancelRestNotif = useCallback(() => {
+    if (restNotifIdRef.current) {
+      Notifications.cancelScheduledNotificationAsync(restNotifIdRef.current).catch(() => {});
+      restNotifIdRef.current = null;
+    }
+  }, []);
+
+  const scheduleRestNotif = useCallback(async (endTimeMs: number) => {
+    cancelRestNotif();
+    try {
+      const id = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: language === 'de' ? '💪 Pause vorbei!' : '💪 Rest Complete!',
+          body: language === 'de'
+            ? 'Dein nächster Satz wartet auf dich.'
+            : 'Time to start your next set.',
+          sound: true,
+          ...(Platform.OS === 'android' && { channelId: 'rest-timer' }),
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: new Date(endTimeMs),
+        },
+      });
+      restNotifIdRef.current = id;
+    } catch {
+      // Permission denied or scheduling error — silent fail, vibration still works.
+    }
+  }, [cancelRestNotif, language]);
+
+  // ── Single interval: drives elapsed timer and rest countdown ────────────
   useEffect(() => {
     intervalRef.current = setInterval(() => {
       const nowElapsed = Math.round((Date.now() - startRef.current) / 1000);
@@ -54,12 +112,15 @@ export default function ActiveWorkoutScreen() {
         setRestDisplay(remaining);
         if (remaining === 0) {
           restEndTimeRef.current = null;
+          // App is in foreground — cancel the lock-screen notification so it
+          // doesn't fire twice; we already vibrate to signal the end.
+          cancelRestNotif();
           if (Platform.OS !== 'web') Vibration.vibrate([0, 300, 100, 300]);
         }
       }
     }, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
+  }, [cancelRestNotif]);
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, '0');
@@ -86,13 +147,17 @@ export default function ActiveWorkoutScreen() {
     completeSet(currentExerciseIndex, setIdx);
     // Start rest timer
     const restSecs = we?.rest_seconds ?? 60;
-    restEndTimeRef.current = Date.now() + restSecs * 1000;
+    const endTimeMs = Date.now() + restSecs * 1000;
+    restEndTimeRef.current = endTimeMs;
     setRestDisplay(restSecs);
+    // Schedule lock-screen notification so user sees it when the phone is locked
+    scheduleRestNotif(endTimeMs);
   };
 
   const handleSkipRest = () => {
     restEndTimeRef.current = null;
     setRestDisplay(null);
+    cancelRestNotif();
   };
 
   const handleFinish = () => {
@@ -134,6 +199,7 @@ export default function ActiveWorkoutScreen() {
       console.error('Error finishing workout:', e);
     }
 
+    cancelRestNotif();
     endSession();
     router.replace('/(tabs)/workout');
   };
@@ -178,7 +244,18 @@ export default function ActiveWorkoutScreen() {
       {restDisplay !== null && restDisplay > 0 && (
         <View style={styles.restBanner}>
           <Text style={styles.restIcon}>⏱</Text>
-          <Text style={styles.restText}>{t.rest}  {formatTime(restDisplay)}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.restText}>{t.rest}  {formatTime(restDisplay)}</Text>
+            {restEndTimeRef.current && (
+              <Text style={styles.restEndHint}>
+                🔔 {language === 'de' ? 'Endet um' : 'Ends at'}{' '}
+                {new Date(restEndTimeRef.current).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </Text>
+            )}
+          </View>
           <TouchableOpacity onPress={handleSkipRest} style={styles.skipRest}>
             <Text style={styles.skipRestText}>Skip</Text>
           </TouchableOpacity>
@@ -331,7 +408,8 @@ const styles = StyleSheet.create({
   exerciseCount: { fontSize: Typography.sizes.sm, color: Colors.textMuted, fontWeight: '600' },
   restBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.primary + '22', paddingHorizontal: Spacing['2xl'], paddingVertical: Spacing.md, gap: Spacing.md },
   restIcon: { fontSize: 18 },
-  restText: { flex: 1, color: Colors.primary, fontWeight: Typography.weights.semibold, fontSize: Typography.sizes.base },
+  restText: { color: Colors.primary, fontWeight: Typography.weights.semibold, fontSize: Typography.sizes.base },
+  restEndHint: { fontSize: Typography.sizes.xs, color: Colors.primary, opacity: 0.7, marginTop: 2 },
   skipRest: { backgroundColor: Colors.primary + '33', paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs, borderRadius: Radius.sm },
   skipRestText: { color: Colors.primary, fontSize: Typography.sizes.sm, fontWeight: '600' },
   scroll: { paddingHorizontal: Spacing['2xl'], paddingTop: Spacing.xl, paddingBottom: 120 },

@@ -4,12 +4,27 @@ import { StatusBar } from 'expo-status-bar';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { queryClient } from '../src/lib/queryClient';
 import { supabase } from '../src/lib/supabase';
 import { useAuthStore } from '../src/stores/authStore';
 import { useLanguageStore } from '../src/stores/languageStore';
 import { profileService } from '../src/services/profileService';
 import { Colors } from '../src/constants';
+
+// Show notifications as banners even while the app is in the foreground.
+// The rest-timer notification is cancelled before it fires when the user is
+// actively watching the countdown, so this only triggers if the app is
+// backgrounded (screen locked) when the timer ends.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 export default function RootLayout() {
   const { setSession, setProfile, setLoading } = useAuthStore();
