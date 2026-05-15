@@ -132,12 +132,21 @@ export default function ActiveWorkoutScreen() {
   const ex = (we as any)?.exercise;
   const sets = currentEx?.sets ?? [];
 
+  // Per-exercise counts (used in the set-logger header)
   const completedSets = sets.filter((s) => s.completed).length;
   const totalSets = sets.length;
-  const overallProgress = activeExercises.reduce(
+
+  // Workout-wide counts (used in the progress strip)
+  const totalCompletedSets = activeExercises.reduce(
     (acc, ae) => acc + ae.sets.filter((s) => s.completed).length,
     0,
-  ) / Math.max(activeExercises.reduce((a, ae) => a + ae.sets.length, 0), 1);
+  );
+  const totalAllSets = Math.max(
+    activeExercises.reduce((a, ae) => a + ae.sets.length, 0),
+    1,
+  );
+  const overallProgress = totalCompletedSets / totalAllSets;
+  const pct = Math.round(overallProgress * 100);
 
   const handleToggleSet = (setIdx: number) => {
     const set = sets[setIdx];
@@ -248,8 +257,19 @@ export default function ActiveWorkoutScreen() {
         </Text>
       </View>
 
-      {/* ── Overall Progress ─────────────────────────────────────── */}
-      <ProgressBar progress={overallProgress} color={Colors.primary} height={3} animated />
+      {/* ── Progress Strip ───────────────────────────────────────── */}
+      <View style={styles.progressStrip}>
+        <View style={styles.progressLabelRow}>
+          <View style={styles.progressLabelLeft}>
+            <Text style={styles.progressPct}>{pct}%</Text>
+            <Text style={styles.progressPctLabel}> complete</Text>
+          </View>
+          <Text style={styles.progressSetsLabel}>
+            {totalCompletedSets}/{totalAllSets} sets done
+          </Text>
+        </View>
+        <ProgressBar progress={overallProgress} color={Colors.primary} height={7} animated />
+      </View>
 
       {/* ── Rest Timer ───────────────────────────────────────────── */}
       {restDisplay !== null && restDisplay > 0 && (
@@ -331,7 +351,10 @@ export default function ActiveWorkoutScreen() {
         </TouchableOpacity>
 
         <View style={styles.setProgress}>
-          <Text style={styles.setProgressText}>{completedSets}/{totalSets} {t.sets.toLowerCase()} done</Text>
+          <Text style={styles.setProgressText}>
+            {completedSets}/{totalSets} {t.sets.toLowerCase()}
+          </Text>
+          <Text style={styles.setProgressSub}>this exercise</Text>
         </View>
 
         {currentExerciseIndex < activeExercises.length - 1 ? (
@@ -424,6 +447,36 @@ const styles = StyleSheet.create({
   timerWrap: { alignItems: 'center' },
   timer: { fontSize: Typography.sizes.xl, fontWeight: Typography.weights.bold, color: Colors.textPrimary, fontVariant: ['tabular-nums'] },
   exerciseCount: { fontSize: Typography.sizes.sm, color: Colors.textMuted, fontWeight: '600' },
+
+  // Progress strip
+  progressStrip: {
+    paddingHorizontal: Spacing['2xl'],
+    paddingBottom: Spacing.md,
+    gap: Spacing.xs,
+  },
+  progressLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+  },
+  progressLabelLeft: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
+  progressPct: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: Typography.weights.extrabold,
+    color: Colors.primary,
+    fontVariant: ['tabular-nums'],
+  },
+  progressPctLabel: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.textSecondary,
+    fontWeight: Typography.weights.medium,
+  },
+  progressSetsLabel: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.textMuted,
+    fontVariant: ['tabular-nums'],
+  },
+
   restBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.primary + '22', paddingHorizontal: Spacing['2xl'], paddingVertical: Spacing.md, gap: Spacing.md },
   restIcon: { fontSize: 18 },
   restText: { color: Colors.primary, fontWeight: Typography.weights.semibold, fontSize: Typography.sizes.base },
@@ -449,7 +502,8 @@ const styles = StyleSheet.create({
   navBtnFinish: { flex: 1, backgroundColor: Colors.accentGreen, borderRadius: Radius.md, paddingVertical: Spacing.md, alignItems: 'center' },
   navBtnNextText: { color: Colors.white, fontWeight: Typography.weights.semibold },
   setProgress: { alignItems: 'center', gap: 2 },
-  setProgressText: { fontSize: Typography.sizes.xs, color: Colors.textSecondary },
+  setProgressText: { fontSize: Typography.sizes.xs, color: Colors.textSecondary, fontVariant: ['tabular-nums'] },
+  setProgressSub: { fontSize: 9, color: Colors.textMuted, letterSpacing: 0.2 },
 });
 
 const sr = StyleSheet.create({
