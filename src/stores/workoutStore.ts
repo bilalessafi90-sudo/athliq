@@ -11,6 +11,7 @@ interface WorkoutStore {
   startSession: (session: WorkoutSession, day: WorkoutDay, exercises: ActiveExercise[]) => void;
   updateSet: (exerciseIdx: number, setIdx: number, field: 'reps' | 'weight', value: number) => void;
   completeSet: (exerciseIdx: number, setIdx: number) => void;
+  toggleSetCompleted: (exerciseIdx: number, setIdx: number) => void;
   nextExercise: () => void;
   prevExercise: () => void;
   endSession: () => void;
@@ -46,6 +47,15 @@ export const useWorkoutStore = create<WorkoutStore>((set, get) => ({
       const exercises = [...s.activeExercises];
       const sets = [...exercises[exerciseIdx].sets];
       sets[setIdx] = { ...sets[setIdx], completed: true };
+      exercises[exerciseIdx] = { ...exercises[exerciseIdx], sets };
+      return { activeExercises: exercises };
+    }),
+
+  toggleSetCompleted: (exerciseIdx, setIdx) =>
+    set((s) => {
+      const exercises = [...s.activeExercises];
+      const sets = [...exercises[exerciseIdx].sets];
+      sets[setIdx] = { ...sets[setIdx], completed: !sets[setIdx].completed };
       exercises[exerciseIdx] = { ...exercises[exerciseIdx], sets };
       return { activeExercises: exercises };
     }),

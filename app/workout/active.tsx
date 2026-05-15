@@ -18,7 +18,8 @@ import { ProgressBar } from '../../src/components/ui';
 export default function ActiveWorkoutScreen() {
   const {
     activeSession, activeDay, activeExercises, currentExerciseIndex,
-    sessionStartTime, updateSet, completeSet, nextExercise, prevExercise, endSession,
+    sessionStartTime, updateSet, completeSet, toggleSetCompleted,
+    nextExercise, prevExercise, endSession,
   } = useWorkoutStore();
   const { user, profile } = useAuthStore();
   const completeSessionMutation = useCompleteSession();
@@ -138,8 +139,18 @@ export default function ActiveWorkoutScreen() {
     0,
   ) / Math.max(activeExercises.reduce((a, ae) => a + ae.sets.length, 0), 1);
 
-  const handleSetComplete = (setIdx: number) => {
+  const handleToggleSet = (setIdx: number) => {
     const set = sets[setIdx];
+
+    if (set.completed) {
+      // Un-complete: let the user fix a mistake. Cancel rest timer so it
+      // doesn't fire for the set they just undid.
+      toggleSetCompleted(currentExerciseIndex, setIdx);
+      handleSkipRest();
+      return;
+    }
+
+    // Mark as complete — reps are required.
     if (!set.reps) {
       Alert.alert('Missing Data', `Please enter ${t.enterReps} before marking complete.`);
       return;
@@ -294,7 +305,7 @@ export default function ActiveWorkoutScreen() {
                 prevReps={prev?.reps}
                 onWeightChange={(v) => updateSet(currentExerciseIndex, i, 'weight', parseFloat(v) || 0)}
                 onRepsChange={(v) => updateSet(currentExerciseIndex, i, 'reps', parseInt(v) || 0)}
-                onComplete={() => handleSetComplete(i)}
+                onToggle={() => handleToggleSet(i)}
               />
             );
           })}
@@ -347,15 +358,19 @@ interface SetRowProps {
   prevReps?: number;
   onWeightChange: (v: string) => void;
   onRepsChange: (v: string) => void;
-  onComplete: () => void;
+  onToggle: () => void;
 }
 
-function SetRow({ set, index, unit, prevWeight, prevReps, onWeightChange, onRepsChange, onComplete }: SetRowProps) {
+function SetRow({ set, index, unit, prevWeight, prevReps, onWeightChange, onRepsChange, onToggle }: SetRowProps) {
   return (
     <View style={[sr.row, set.completed && sr.rowDone]}>
-      <Text style={[sr.col, { flex: 0.5, color: Colors.textSecondary, fontWeight: '700' }]}>
-        {index + 1}
-      </Text>
+      {/* Set number + edit hint */}
+      <View style={[sr.col, { flex: 0.5, flexDirection: 'column', alignItems: 'center' }]}>
+        <Text style={[sr.setNum, set.completed && sr.setNumDone]}>{index + 1}</Text>
+        {set.completed && <Text style={sr.editHint}>✎</Text>}
+      </View>
+
+      {/* Weight input — always editable */}
       <View style={[sr.col, { flex: 1, flexDirection: 'column', alignItems: 'center' }]}>
         <TextInput
           style={[sr.input, set.completed && sr.inputDone]}
@@ -364,12 +379,13 @@ function SetRow({ set, index, unit, prevWeight, prevReps, onWeightChange, onReps
           placeholder="0"
           placeholderTextColor={Colors.textMuted}
           keyboardType="decimal-pad"
-          editable={!set.completed}
         />
         {prevWeight != null && prevReps != null && (
           <Text style={sr.prevHint}>Prev: {prevWeight} × {prevReps}</Text>
         )}
       </View>
+
+      {/* Reps input — always editable */}
       <View style={[sr.col, { flex: 1, flexDirection: 'column', alignItems: 'center' }]}>
         <TextInput
           style={[sr.input, set.completed && sr.inputDone]}
@@ -378,19 +394,21 @@ function SetRow({ set, index, unit, prevWeight, prevReps, onWeightChange, onReps
           placeholder="0"
           placeholderTextColor={Colors.textMuted}
           keyboardType="number-pad"
-          editable={!set.completed}
         />
       </View>
+
+      {/* Done / undo toggle button */}
       <View style={[sr.col, { flex: 0.8, alignItems: 'center' }]}>
         <TouchableOpacity
-          onPress={onComplete}
-          disabled={set.completed}
+          onPress={onToggle}
           style={[sr.doneBtn, set.completed && sr.doneBtnActive]}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Text style={[sr.doneBtnText, set.completed && sr.doneBtnTextActive]}>
             {set.completed ? '✓' : '○'}
           </Text>
         </TouchableOpacity>
+        {set.completed && <Text style={sr.undoHint}>undo</Text>}
       </View>
     </View>
   );
@@ -438,11 +456,37 @@ const sr = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base, paddingVertical: Spacing.sm, borderBottomWidth: 1, borderBottomColor: Colors.border },
   rowDone: { backgroundColor: Colors.accentGreen + '0C' },
   col: { flexDirection: 'row', alignItems: 'center' },
-  input: { flex: 1, fontSize: Typography.sizes.md, fontWeight: Typography.weights.semibold, color: Colors.textPrimary, textAlign: 'center', backgroundColor: Colors.surfaceElevated, borderRadius: Radius.sm, paddingVertical: Spacing.sm, marginHorizontal: 2 },
-  inputDone: { color: Colors.accentGreen, backgroundColor: Colors.accentGreen + '15' },
+
+  // Set number column
+  setNum: { fontSize: Typography.sizes.sm, color: Colors.textSecondary, fontWeight: '700' },
+  setNumDone: { color: Colors.accentGreen },
+  editHint: { fontSize: 9, color: Colors.accentGreen, marginTop: 1, opacity: 0.8 },
+
+  // Inputs — no disabled state; green tint when the set is done
+  input: {
+    flex: 1,
+    fontSize: Typography.sizes.md,
+    fontWeight: Typography.weights.semibold,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: Radius.sm,
+    paddingVertical: Spacing.sm,
+    marginHorizontal: 2,
+  },
+  inputDone: {
+    color: Colors.accentGreen,
+    backgroundColor: Colors.accentGreen + '15',
+    borderWidth: 1,
+    borderColor: Colors.accentGreen + '40',
+  },
+
+  // Done / undo button
   doneBtn: { width: 36, height: 36, borderRadius: Radius.full, borderWidth: 2, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
   doneBtnActive: { backgroundColor: Colors.accentGreen, borderColor: Colors.accentGreen },
   doneBtnText: { color: Colors.textMuted, fontSize: 16 },
   doneBtnTextActive: { color: Colors.white, fontWeight: '700' },
+  undoHint: { fontSize: 8, color: Colors.accentGreen, marginTop: 2, opacity: 0.7, letterSpacing: 0.3 },
+
   prevHint: { fontSize: 9, color: Colors.textMuted, marginTop: 2 },
 });
