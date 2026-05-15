@@ -12,7 +12,8 @@ import { Colors, Typography, Spacing, Radius } from '../../src/constants';
 import { WorkoutExercise, ActiveExercise, ActiveSet } from '../../src/types';
 import { getWorkoutDayFallbackImage } from '../../src/hooks/useExerciseImage';
 import { calculateWorkoutDuration } from '../../src/utils/workoutDuration';
-import { useT } from '../../src/stores/languageStore';
+import { useT, useLanguageStore } from '../../src/stores/languageStore';
+import { translateExercise } from '../../src/i18n/exerciseTranslations';
 
 export default function WorkoutDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,6 +24,7 @@ export default function WorkoutDetailScreen() {
   const [starting, setStarting] = useState(false);
 
   const t = useT();
+  const { language } = useLanguageStore();
   const exercises: WorkoutExercise[] = (day as any)?.workout_exercises ?? [];
   const sortedEx = [...exercises].sort((a, b) => a.order_index - b.order_index);
   const { label: durationLabel } = calculateWorkoutDuration(sortedEx);
@@ -115,6 +117,7 @@ export default function WorkoutDetailScreen() {
 
         {sortedEx.map((we, index) => {
           const ex = (we as any).exercise;
+          const exT = translateExercise(ex?.name ?? '', ex?.instructions ?? '', language);
 
           return (
             <Card key={we.id} style={styles.exCard}>
@@ -138,7 +141,7 @@ export default function WorkoutDetailScreen() {
 
               {/* Exercise details */}
               <View style={styles.exBody}>
-                <Text style={styles.exName}>{ex?.name ?? 'Exercise'}</Text>
+                <Text style={styles.exName}>{exT.name || 'Exercise'}</Text>
                 <Text style={styles.exMuscles}>
                   {ex?.muscle_groups?.join(' · ') ?? ''}
                 </Text>
@@ -151,12 +154,12 @@ export default function WorkoutDetailScreen() {
                 </View>
 
                 {/* Instructions */}
-                {ex?.instructions && (
+                {exT.instructions ? (
                   <View style={styles.instructionBox}>
                     <Text style={styles.instructionLabel}>{t.howToPerform}</Text>
-                    <Text style={styles.instructions}>{ex.instructions}</Text>
+                    <Text style={styles.instructions}>{exT.instructions}</Text>
                   </View>
-                )}
+                ) : null}
 
                 {/* Equipment tags */}
                 {ex?.equipment && ex.equipment.length > 0 && (

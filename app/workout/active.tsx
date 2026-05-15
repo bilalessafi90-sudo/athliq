@@ -8,7 +8,8 @@ import { useWorkoutStore } from '../../src/stores/workoutStore';
 import { useCompleteSession, useLastSessionLogs } from '../../src/hooks/useWorkout';
 import { workoutService } from '../../src/services/workoutService';
 import { useAuthStore } from '../../src/stores/authStore';
-import { useT } from '../../src/stores/languageStore';
+import { useT, useLanguageStore } from '../../src/stores/languageStore';
+import { translateExercise } from '../../src/i18n/exerciseTranslations';
 import { Colors, Typography, Spacing, Radius } from '../../src/constants';
 import { ActiveSet } from '../../src/types';
 import { ProgressBar } from '../../src/components/ui';
@@ -21,6 +22,7 @@ export default function ActiveWorkoutScreen() {
   const { user, profile } = useAuthStore();
   const completeSessionMutation = useCompleteSession();
   const t = useT();
+  const { language } = useLanguageStore();
 
   const startRef = useRef<number>(Date.now());
   const [elapsed, setElapsed] = useState(0);
@@ -151,6 +153,9 @@ export default function ActiveWorkoutScreen() {
 
   const restActive = restDisplay !== null && restDisplay > 0;
 
+  // Translated exercise name + instructions (falls back to English if no translation exists)
+  const exT = translateExercise(ex?.name ?? '', ex?.instructions ?? '', language);
+
   return (
     <SafeAreaView style={styles.root}>
       {/* ── Top Bar ──────────────────────────────────────────────── */}
@@ -183,7 +188,7 @@ export default function ActiveWorkoutScreen() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* ── Exercise Header ──────────────────────────────────────── */}
         <View style={styles.exHeader}>
-          <Text style={styles.exName}>{ex?.name ?? 'Exercise'}</Text>
+          <Text style={styles.exName}>{exT.name || 'Exercise'}</Text>
           <Text style={styles.exMuscles}>{ex?.muscle_groups?.join(' · ')}</Text>
           <Text style={styles.exTarget}>
             Target: {we?.sets} {t.sets} × {we?.reps} {t.reps} · {we?.rest_seconds}s {t.rest}
@@ -219,12 +224,12 @@ export default function ActiveWorkoutScreen() {
         </View>
 
         {/* ── Exercise Notes ───────────────────────────────────────── */}
-        {ex?.instructions && (
+        {exT.instructions ? (
           <View style={styles.instructions}>
             <Text style={styles.instructionsTitle}>{t.howToPerform}</Text>
-            <Text style={styles.instructionsText}>{ex.instructions}</Text>
+            <Text style={styles.instructionsText}>{exT.instructions}</Text>
           </View>
-        )}
+        ) : null}
       </ScrollView>
 
       {/* ── Navigation ───────────────────────────────────────────── */}
