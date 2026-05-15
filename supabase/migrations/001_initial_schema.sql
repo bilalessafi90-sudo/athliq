@@ -299,9 +299,9 @@ CREATE TRIGGER update_profiles_updated_at
 -- ─── STORAGE ─────────────────────────────────────────────────────────────────
 
 INSERT INTO storage.buckets (id, name, public) VALUES
-  ('progress-photos', 'progress-photos', FALSE),
+  ('progress-photos', 'progress-photos', TRUE),
   ('avatars', 'avatars', TRUE)
-ON CONFLICT DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
 
 CREATE POLICY "Users upload own progress photos"
   ON storage.objects FOR INSERT

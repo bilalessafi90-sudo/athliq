@@ -5,9 +5,9 @@ import { WeightLog, MeasurementLog, ProgressPhoto, MeasurementType, WeightUnit }
 
 /**
  * Extract the raw storage path from whatever value is stored in photo_url.
- * Handles both legacy full URLs and bare paths.
- *   "https://….supabase.co/storage/v1/object/…/progress-photos/userId/ts.jpg"
+ * Handles both bare paths and legacy full URLs (public or signed).
  *   "userId/ts.jpg"
+ *   "https://….supabase.co/storage/v1/object/public/progress-photos/userId/ts.jpg"
  *   "https://….supabase.co/storage/v1/object/sign/progress-photos/userId/ts.jpg?token=…"
  */
 function storagePath(raw: string): string {
@@ -105,8 +105,6 @@ export const progressService = {
     uri: string,
     notes?: string,
   ): Promise<ProgressPhoto> {
-    // expo-image-picker with allowsEditing:true always produces a local file://
-    // URI, so fetch + blob is safe here.
     const path = `${userId}/${Date.now()}.jpg`;
 
     const localResponse = await fetch(uri);
@@ -118,11 +116,15 @@ export const progressService = {
 
     if (uploadError) throw uploadError;
 
-    // Store only the storage PATH (not a URL) so we can always generate fresh
-    // signed URLs on fetch — the bucket is private so public URLs don't work.
+    // Store the public URL. The bucket is set to public so this URL is
+    // directly loadable by React Native's Image component without auth.
+    const { data: urlData } = supabase.storage
+      .from('progress-photos')
+      .getPublicUrl(path);
+
     const { data, error } = await supabase
       .from('progress_photos')
-      .insert({ user_id: userId, photo_url: path, notes })
+      .insert({ user_id: userId, photo_url: urlData.publicUrl, notes })
       .select()
       .single();
     if (error) throw error;
@@ -137,27 +139,22 @@ export const progressService = {
       .order('logged_at', { ascending: false });
     if (error) throw error;
 
-    const photos = data ?? [];
-    if (photos.length === 0) return [];
-
-    // Extract storage paths (handles both bare paths and legacy full URLs).
-    const paths = photos.map((p) => storagePath(p.photo_url));
-
-    // Batch-generate signed URLs (1 hour TTL). The bucket is private so we use
-    // signed URLs instead of public URLs. The SELECT policy in storage.objects
-    // allows each user to sign their own objects.
-    const { data: signedData } = await supabase.storage
-      .from('progress-photos')
-      .createSignedUrls(paths, 3600);
-
-    return photos.map((p, i) => ({
-      ...p,
-      photo_url: signedData?.[i]?.signedUrl ?? p.photo_url,
-    }));
+    // Normalise all rows to a guaranteed-working public URL.
+    // Handles: bare path, old full URL, or signed URL (all converted via storagePath).
+    return (data ?? []).map((p) => {
+      const path = storagePath(p.photo_url);
+      // If already a clean public URL, keep it; otherwise rebuild from path.
+      const isPublicUrl =
+        p.photo_url.includes('/object/public/') && !p.photo_url.includes('?');
+      if (isPublicUrl) return p;
+      const { data: pub } = supabase.storage
+        .from('progress-photos')
+        .getPublicUrl(path);
+      return { ...p, photo_url: pub.publicUrl };
+    });
   },
 
   async deleteProgressPhoto(photoId: string, photoUrl: string): Promise<void> {
-    // Remove from Storage first so space is freed.
     try {
       await supabase.storage.from('progress-photos').remove([storagePath(photoUrl)]);
     } catch {
