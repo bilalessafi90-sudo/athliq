@@ -14,6 +14,7 @@ import { translateExercise } from '../../src/i18n/exerciseTranslations';
 import { Colors, Typography, Spacing, Radius } from '../../src/constants';
 import { ActiveSet } from '../../src/types';
 import { ProgressBar } from '../../src/components/ui';
+import { getExerciseType, formatSetValue, ExerciseType } from '../../src/utils/exerciseType';
 
 export default function ActiveWorkoutScreen() {
   const {
@@ -132,6 +133,12 @@ export default function ActiveWorkoutScreen() {
   const ex = (we as any)?.exercise;
   const sets = currentEx?.sets ?? [];
 
+  // Detect whether this exercise is reps-based or time-based (or distance).
+  // We read the target reps string that's already stored on the workout exercise,
+  // e.g. '8-12' → reps, '30-60s' → time, '1min' → time.
+  const exerciseType: ExerciseType = getExerciseType(we?.reps ?? '');
+  const isTimeBased = exerciseType === 'time';
+
   // Per-exercise counts (used in the set-logger header)
   const completedSets = sets.filter((s) => s.completed).length;
   const totalSets = sets.length;
@@ -159,9 +166,10 @@ export default function ActiveWorkoutScreen() {
       return;
     }
 
-    // Mark as complete — reps are required.
+    // Mark as complete — reps / duration are required.
     if (!set.reps) {
-      Alert.alert('Missing Data', `Please enter ${t.enterReps} before marking complete.`);
+      const label = isTimeBased ? t.duration : t.enterReps;
+      Alert.alert('Missing Data', `Please enter ${label} before marking complete.`);
       return;
     }
     completeSet(currentExerciseIndex, setIdx);
@@ -308,7 +316,9 @@ export default function ActiveWorkoutScreen() {
           <View style={styles.setsHeader}>
             <Text style={[styles.col, { flex: 0.5 }]}>{t.sets.toUpperCase()}</Text>
             <Text style={[styles.col, { flex: 1 }]}>{t.enterWeight} ({profile?.weight_unit ?? 'kg'})</Text>
-            <Text style={[styles.col, { flex: 1 }]}>{t.enterReps}</Text>
+            <Text style={[styles.col, { flex: 1 }]}>
+              {isTimeBased ? `⏱ ${t.duration} (${t.seconds})` : t.enterReps}
+            </Text>
             <Text style={[styles.col, { flex: 0.8 }]}>{t.setComplete}</Text>
           </View>
 
@@ -320,6 +330,7 @@ export default function ActiveWorkoutScreen() {
                 key={i}
                 set={set}
                 index={i}
+                exerciseType={exerciseType}
                 unit={profile?.weight_unit ?? 'kg'}
                 prevWeight={prev?.weight}
                 prevReps={prev?.reps}
@@ -376,6 +387,7 @@ export default function ActiveWorkoutScreen() {
 interface SetRowProps {
   set: ActiveSet;
   index: number;
+  exerciseType: ExerciseType;
   unit: string;
   prevWeight?: number;
   prevReps?: number;
@@ -384,7 +396,18 @@ interface SetRowProps {
   onToggle: () => void;
 }
 
-function SetRow({ set, index, unit, prevWeight, prevReps, onWeightChange, onRepsChange, onToggle }: SetRowProps) {
+function SetRow({
+  set, index, exerciseType, unit,
+  prevWeight, prevReps,
+  onWeightChange, onRepsChange, onToggle,
+}: SetRowProps) {
+  const isTime = exerciseType === 'time';
+
+  // When a time-based set is done, format the stored seconds nicely.
+  const repsDisplayDone = isTime
+    ? formatSetValue(set.reps, 'time')
+    : set.reps != null ? String(set.reps) : '';
+
   return (
     <View style={[sr.row, set.completed && sr.rowDone]}>
       {/* Set number + edit hint */}
@@ -404,20 +427,37 @@ function SetRow({ set, index, unit, prevWeight, prevReps, onWeightChange, onReps
           keyboardType="decimal-pad"
         />
         {prevWeight != null && prevReps != null && (
-          <Text style={sr.prevHint}>Prev: {prevWeight} × {prevReps}</Text>
+          <Text style={sr.prevHint}>
+            {isTime
+              ? `Prev: ${formatSetValue(prevReps, 'time')}`
+              : `Prev: ${prevWeight} × ${prevReps}`}
+          </Text>
         )}
       </View>
 
-      {/* Reps input — always editable */}
+      {/* Reps / Duration input — always editable */}
       <View style={[sr.col, { flex: 1, flexDirection: 'column', alignItems: 'center' }]}>
-        <TextInput
-          style={[sr.input, set.completed && sr.inputDone]}
-          value={set.reps != null ? String(set.reps) : ''}
-          onChangeText={onRepsChange}
-          placeholder="0"
-          placeholderTextColor={Colors.textMuted}
-          keyboardType="number-pad"
-        />
+        {/* When completed, show formatted value; when editing show raw number */}
+        {set.completed && isTime ? (
+          /* Tappable display — user can still edit by un-completing */
+          <View style={[sr.input, sr.inputDone, sr.inputTimeDisplay]}>
+            <Text style={sr.inputTimeDoneText}>{repsDisplayDone || '—'}</Text>
+          </View>
+        ) : (
+          <View style={sr.inputRow}>
+            <TextInput
+              style={[sr.input, sr.inputFlex, set.completed && sr.inputDone]}
+              value={set.reps != null ? String(set.reps) : ''}
+              onChangeText={onRepsChange}
+              placeholder={isTime ? '30' : '0'}
+              placeholderTextColor={Colors.textMuted}
+              keyboardType="number-pad"
+            />
+            {isTime && (
+              <Text style={[sr.unitSuffix, set.completed && sr.unitSuffixDone]}>s</Text>
+            )}
+          </View>
+        )}
       </View>
 
       {/* Done / undo toggle button */}
@@ -528,11 +568,34 @@ const sr = StyleSheet.create({
     paddingVertical: Spacing.sm,
     marginHorizontal: 2,
   },
+  inputFlex: { flex: 1 },
   inputDone: {
     color: Colors.accentGreen,
     backgroundColor: Colors.accentGreen + '15',
     borderWidth: 1,
     borderColor: Colors.accentGreen + '40',
+  },
+  // Row wrapper for input + unit suffix ("s")
+  inputRow: { flexDirection: 'row', alignItems: 'center', flex: 1, marginHorizontal: 2 },
+  unitSuffix: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.textMuted,
+    fontWeight: Typography.weights.semibold,
+    paddingLeft: 2,
+  },
+  unitSuffixDone: { color: Colors.accentGreen },
+  // Time-based done display (formatted "45s" / "1m 30s")
+  inputTimeDisplay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 2,
+    paddingVertical: Spacing.sm,
+  },
+  inputTimeDoneText: {
+    fontSize: Typography.sizes.md,
+    fontWeight: Typography.weights.bold,
+    color: Colors.accentGreen,
   },
 
   // Done / undo button

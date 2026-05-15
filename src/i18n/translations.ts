@@ -81,6 +81,8 @@ const translations = {
     setComplete: 'Set Complete',
     enterWeight: 'Weight',
     enterReps: 'Reps',
+    duration: 'Duration',
+    seconds: 'sec',
     workoutComplete: 'Workout Complete! 🎉',
 
     // Nutrition
@@ -260,6 +262,8 @@ const translations = {
     setComplete: 'Satz abgeschlossen',
     enterWeight: 'Gewicht',
     enterReps: 'Wdh.',
+    duration: 'Dauer',
+    seconds: 'Sek',
     workoutComplete: 'Training abgeschlossen! 🎉',
 
     // Nutrition

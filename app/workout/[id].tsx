@@ -14,6 +14,7 @@ import { getWorkoutDayFallbackImage } from '../../src/hooks/useExerciseImage';
 import { calculateWorkoutDuration } from '../../src/utils/workoutDuration';
 import { useT, useLanguageStore } from '../../src/stores/languageStore';
 import { translateExercise } from '../../src/i18n/exerciseTranslations';
+import { getExerciseType } from '../../src/utils/exerciseType';
 
 export default function WorkoutDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -118,6 +119,8 @@ export default function WorkoutDetailScreen() {
         {sortedEx.map((we, index) => {
           const ex = (we as any).exercise;
           const exT = translateExercise(ex?.name ?? '', ex?.instructions ?? '', language);
+          const exType = getExerciseType(we.reps);
+          const isTimeBased = exType === 'time';
 
           return (
             <Card key={we.id} style={styles.exCard}>
@@ -149,7 +152,11 @@ export default function WorkoutDetailScreen() {
                 {/* Sets / Reps / Rest grid */}
                 <View style={styles.setsRow}>
                   <SetPill label={t.sets} value={String(we.sets)} />
-                  <SetPill label={t.reps} value={we.reps} highlight />
+                  <SetPill
+                    label={isTimeBased ? `⏱ ${t.duration}` : t.reps}
+                    value={we.reps}
+                    highlight
+                  />
                   <SetPill label={t.rest} value={`${we.rest_seconds}s`} />
                 </View>
 
