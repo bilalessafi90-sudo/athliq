@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   SafeAreaView, Alert, ActivityIndicator, Modal,
@@ -44,12 +44,50 @@ export default function NutritionScreen() {
     { cal: 0, p: 0, c: 0, f: 0 },
   );
 
-  // Group grocery by category
-  const groceryByCategory = groceryItems.reduce<Record<string, typeof groceryItems>>((acc, item) => {
-    if (!acc[item.category]) acc[item.category] = [];
-    acc[item.category].push(item);
-    return acc;
-  }, {});
+  // Unique recipes (deduplicated by meal name) for the grocery grouping
+  const uniqueRecipes = useMemo(() => {
+    const seen = new Set<string>();
+    return (mealPlan?.meals ?? []).filter((m) => {
+      if (seen.has(m.name)) return false;
+      seen.add(m.name);
+      return true;
+    });
+  }, [mealPlan?.meals]);
+
+  // Fast lookup: lowercase grocery item name → item
+  const groceryByName = useMemo(() => {
+    const map = new Map<string, typeof groceryItems[number]>();
+    groceryItems.forEach((item) => map.set(item.name.toLowerCase(), item));
+    return map;
+  }, [groceryItems]);
+
+  // Returns true when any ingredient string contains the item name (case-insensitive)
+  const itemsForRecipe = (meal: Meal) =>
+    groceryItems.filter((item) =>
+      meal.ingredients.some((ing) => ing.toLowerCase().includes(item.name.toLowerCase())),
+    );
+
+  // Items that don't match any known recipe
+  const linkedItemIds = useMemo(() => {
+    const ids = new Set<string>();
+    uniqueRecipes.forEach((meal) => {
+      groceryItems.forEach((item) => {
+        if (meal.ingredients.some((ing) => ing.toLowerCase().includes(item.name.toLowerCase()))) {
+          ids.add(item.id);
+        }
+      });
+    });
+    return ids;
+  }, [uniqueRecipes, groceryItems]);
+
+  const unlinkedItems = useMemo(
+    () => groceryItems.filter((i) => !linkedItemIds.has(i.id)),
+    [groceryItems, linkedItemIds],
+  );
+
+  const checkedCount = groceryItems.filter((i) => i.checked).length;
+  const totalCount = groceryItems.length;
+  const allDone = totalCount > 0 && checkedCount === totalCount;
 
   const handleGeneratePlan = async () => {
     if (!user || !profile?.fitness_goal) {
@@ -196,36 +234,101 @@ export default function NutritionScreen() {
               )}
             </>
           ) : (
-            /* ── Grocery List ── */
+            /* ── Grocery List (grouped by recipe) ── */
             <>
+              {/* Header */}
               <View style={styles.groceryHeader}>
                 <Text style={styles.groceryCount}>
-                  {groceryItems.filter((i) => i.checked).length}/{groceryItems.length} items
+                  {checkedCount}/{totalCount} {t.checked}
                 </Text>
                 <Text style={styles.groceryNote}>Tap items to check them off</Text>
               </View>
-              {Object.entries(groceryByCategory).map(([cat, items]) => (
-                <View key={cat} style={styles.groceryCat}>
-                  <Text style={styles.groceryCatTitle}>{cat}</Text>
-                  {items.map((item) => (
-                    <TouchableOpacity
-                      key={item.id}
-                      onPress={() => toggleGrocery.mutate({ itemId: item.id, checked: !item.checked })}
-                      style={[styles.groceryItem, item.checked && styles.groceryItemDone]}
-                    >
-                      <View style={[styles.checkbox, item.checked && styles.checkboxDone]}>
-                        {item.checked && <Text style={styles.checkMark}>✓</Text>}
-                      </View>
-                      <Text style={[styles.groceryName, item.checked && styles.groceryNameDone]}>
-                        {item.name}
-                      </Text>
-                      {item.quantity ? (
-                        <Text style={styles.groceryQty}>{item.quantity}</Text>
-                      ) : null}
-                    </TouchableOpacity>
-                  ))}
+
+              {/* All-done banner */}
+              {allDone && (
+                <View style={styles.allDoneBadge}>
+                  <Text style={styles.allDoneText}>{t.allDone}</Text>
                 </View>
-              ))}
+              )}
+
+              {/* Recipe cards */}
+              {uniqueRecipes.map((meal) => {
+                const mealItems = itemsForRecipe(meal);
+                const recipeAllDone = mealItems.length > 0 && mealItems.every((i) => i.checked);
+                return (
+                  <View key={meal.id} style={[styles.recipeCard, recipeAllDone && styles.recipeCardDone]}>
+                    <View style={styles.recipeHeader}>
+                      <View style={styles.recipeIconWrap}>
+                        <Text style={styles.recipeIcon}>{MEAL_ICONS[meal.meal_type]}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.recipeName, recipeAllDone && styles.recipeNameDone]}>
+                          {meal.name}
+                        </Text>
+                        <Text style={styles.recipeMeta}>
+                          {mealItems.length} {t.ingredients.toLowerCase()} · {meal.day_of_week}
+                        </Text>
+                      </View>
+                      {recipeAllDone && <Text style={styles.recipeDoneIcon}>✓</Text>}
+                    </View>
+
+                    <View style={styles.ingredientList}>
+                      {mealItems.length === 0 ? (
+                        <Text style={styles.noLinkedText}>{t.noLinkedItems}</Text>
+                      ) : (
+                        mealItems.map((item) => (
+                          <TouchableOpacity
+                            key={item.id}
+                            onPress={() => toggleGrocery.mutate({ itemId: item.id, checked: !item.checked })}
+                            style={styles.ingredientRow}
+                          >
+                            <View style={[styles.checkbox, item.checked && styles.checkboxDone]}>
+                              {item.checked && <Text style={styles.checkMark}>✓</Text>}
+                            </View>
+                            <Text style={[styles.ingredientText, item.checked && styles.ingredientDone]}>
+                              {item.name}
+                            </Text>
+                            {item.quantity ? (
+                              <Text style={styles.groceryQty}>{item.quantity}</Text>
+                            ) : null}
+                          </TouchableOpacity>
+                        ))
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
+
+              {/* Unlinked items (catch-all) */}
+              {unlinkedItems.length > 0 && (
+                <View style={styles.recipeCard}>
+                  <View style={styles.recipeHeader}>
+                    <View style={styles.recipeIconWrap}>
+                      <Text style={styles.recipeIcon}>🛒</Text>
+                    </View>
+                    <Text style={[styles.recipeName, { flex: 1 }]}>{t.otherItems}</Text>
+                  </View>
+                  <View style={styles.ingredientList}>
+                    {unlinkedItems.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        onPress={() => toggleGrocery.mutate({ itemId: item.id, checked: !item.checked })}
+                        style={styles.ingredientRow}
+                      >
+                        <View style={[styles.checkbox, item.checked && styles.checkboxDone]}>
+                          {item.checked && <Text style={styles.checkMark}>✓</Text>}
+                        </View>
+                        <Text style={[styles.ingredientText, item.checked && styles.ingredientDone]}>
+                          {item.name}
+                        </Text>
+                        {item.quantity ? (
+                          <Text style={styles.groceryQty}>{item.quantity}</Text>
+                        ) : null}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
             </>
           )}
           <View style={{ height: Spacing.xl }} />
@@ -341,16 +444,71 @@ const styles = StyleSheet.create({
   groceryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.base },
   groceryCount: { fontSize: Typography.sizes.md, fontWeight: Typography.weights.bold, color: Colors.textPrimary },
   groceryNote: { fontSize: Typography.sizes.xs, color: Colors.textMuted },
-  groceryCat: { marginBottom: Spacing.xl },
-  groceryCatTitle: { fontSize: Typography.sizes.sm, fontWeight: Typography.weights.bold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: Spacing.sm },
-  groceryItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.sm, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  groceryItemDone: { opacity: 0.5 },
+  groceryQty: { fontSize: Typography.sizes.sm, color: Colors.textSecondary },
+
+  // All-done banner
+  allDoneBadge: {
+    backgroundColor: Colors.accentGreen + '22',
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.accentGreen + '55',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    marginBottom: Spacing.base,
+  },
+  allDoneText: { fontSize: Typography.sizes.sm, color: Colors.accentGreen, fontWeight: Typography.weights.semibold, textAlign: 'center' },
+
+  // Recipe cards
+  recipeCard: {
+    backgroundColor: Colors.card,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    marginBottom: Spacing.md,
+    overflow: 'hidden',
+  },
+  recipeCardDone: { borderColor: Colors.accentGreen + '66', opacity: 0.8 },
+  recipeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    padding: Spacing.base,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  recipeIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeIcon: { fontSize: 18 },
+  recipeName: { fontSize: Typography.sizes.base, fontWeight: Typography.weights.semibold, color: Colors.textPrimary },
+  recipeNameDone: { color: Colors.textMuted },
+  recipeMeta: { fontSize: Typography.sizes.xs, color: Colors.textMuted, marginTop: 2 },
+  recipeDoneIcon: { fontSize: Typography.sizes.base, color: Colors.accentGreen, fontWeight: Typography.weights.bold },
+
+  // Ingredient rows
+  ingredientList: { paddingHorizontal: Spacing.base, paddingBottom: Spacing.sm },
+  ingredientRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border + '88',
+  },
+  ingredientText: { flex: 1, fontSize: Typography.sizes.base, color: Colors.textPrimary },
+  ingredientDone: { textDecorationLine: 'line-through', color: Colors.textMuted },
+  noLinkedText: { fontSize: Typography.sizes.sm, color: Colors.textMuted, fontStyle: 'italic', paddingVertical: Spacing.sm },
+
+  // Shared checkbox
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
   checkboxDone: { backgroundColor: Colors.accentGreen, borderColor: Colors.accentGreen },
   checkMark: { color: Colors.white, fontSize: 12, fontWeight: '700' },
-  groceryName: { flex: 1, fontSize: Typography.sizes.base, color: Colors.textPrimary },
-  groceryNameDone: { textDecorationLine: 'line-through', color: Colors.textMuted },
-  groceryQty: { fontSize: Typography.sizes.sm, color: Colors.textSecondary },
 });
 
 const mc = StyleSheet.create({

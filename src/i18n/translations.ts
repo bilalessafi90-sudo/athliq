@@ -100,6 +100,10 @@ const translations = {
     perDay: 'per day',
     target: 'Target',
     checked: 'checked',
+    neededFor: 'Needed for',
+    allDone: 'All items checked! You\'re ready to cook 🎉',
+    otherItems: 'Other Items',
+    noLinkedItems: 'No items linked to this recipe',
 
     // Progress
     bodyWeight: 'Body Weight',
@@ -275,6 +279,10 @@ const translations = {
     perDay: 'pro Tag',
     target: 'Ziel',
     checked: 'abgehakt',
+    neededFor: 'Benötigt für',
+    allDone: 'Alle Artikel abgehakt! Du kannst loslegen 🎉',
+    otherItems: 'Sonstiges',
+    noLinkedItems: 'Keine Zutaten verknüpft',
 
     // Progress
     bodyWeight: 'Körpergewicht',
