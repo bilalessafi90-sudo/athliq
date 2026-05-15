@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   SafeAreaView, Modal, TextInput, Alert, Image,
@@ -237,17 +237,19 @@ export default function ProgressScreen() {
         {/* ── Photos Tab ─────────────────────────────────────────── */}
         {activeTab === 'photos' && (
           <View style={styles.section}>
-            {photos.length === 0 ? (
+            {uploadPhoto.isPending && (
+              <View style={styles.uploadingBanner}>
+                <ActivityIndicator color={Colors.primary} size="small" />
+                <Text style={styles.uploadingText}>Uploading photo…</Text>
+              </View>
+            )}
+            {photos.length === 0 && !uploadPhoto.isPending ? (
               <EmptyState icon="📸" text="No progress photos yet.\nTap + Log to add your first photo." />
             ) : (
               <View style={styles.photoGrid}>
                 {photos.map((p) => (
                   <TouchableOpacity key={p.id} style={styles.photoWrap} activeOpacity={0.85} onPress={() => setViewPhoto(p)}>
-                    <Image
-                      source={{ uri: p.photo_url }}
-                      style={styles.photo}
-                      resizeMode="cover"
-                    />
+                    <PhotoImage uri={p.photo_url} style={styles.photo} />
                     <Text style={styles.photoDate}>{format(parseISO(p.logged_at), 'MMM d')}</Text>
                   </TouchableOpacity>
                 ))}
@@ -324,11 +326,7 @@ export default function ProgressScreen() {
 
             {viewPhoto && (
               <>
-                <Image
-                  source={{ uri: viewPhoto.photo_url }}
-                  style={viewer.image}
-                  resizeMode="contain"
-                />
+                <PhotoImage uri={viewPhoto.photo_url} style={viewer.image} resizeMode="contain" />
                 <View style={viewer.footer}>
                   <Text style={viewer.dateText}>
                     {format(parseISO(viewPhoto.logged_at), 'EEEE, MMMM d, yyyy')}
@@ -384,6 +382,53 @@ export default function ProgressScreen() {
     </SafeAreaView>
   );
 }
+
+// ─── Photo Image with loading + error states ──────────────────────────────────
+
+function PhotoImage({
+  uri,
+  style,
+  resizeMode = 'cover',
+}: {
+  uri: string;
+  style: any;
+  resizeMode?: 'cover' | 'contain' | 'stretch' | 'center';
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  return (
+    <View style={[style, { backgroundColor: Colors.card, overflow: 'hidden' }]}>
+      {!error && (
+        <Image
+          source={{ uri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode={resizeMode}
+          onLoadStart={() => { setLoading(true); setError(false); }}
+          onLoad={() => setLoading(false)}
+          onError={() => { setLoading(false); setError(true); }}
+        />
+      )}
+      {loading && !error && (
+        <View style={pi.center}>
+          <ActivityIndicator color={Colors.primary} size="small" />
+        </View>
+      )}
+      {error && (
+        <View style={pi.center}>
+          <Text style={pi.errorIcon}>🖼️</Text>
+          <Text style={pi.errorText}>Could not load</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const pi = StyleSheet.create({
+  center: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  errorIcon: { fontSize: 28, marginBottom: 4 },
+  errorText: { fontSize: Typography.sizes.xs, color: Colors.textMuted, textAlign: 'center' },
+});
 
 // ─── Weight Chart (pure RN SVG-free) ──────────────────────────────────────────
 
@@ -507,6 +552,8 @@ const styles = StyleSheet.create({
   measureRight: { alignItems: 'flex-end' },
   measureValue: { fontSize: Typography.sizes.base, fontWeight: Typography.weights.bold, color: Colors.primary },
   measureDate: { fontSize: Typography.sizes.xs, color: Colors.textMuted },
+  uploadingBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.primary + '18', borderRadius: Radius.md, padding: Spacing.md, marginBottom: Spacing.sm },
+  uploadingText: { fontSize: Typography.sizes.sm, color: Colors.primary, fontWeight: Typography.weights.medium },
   sessionCard: { gap: Spacing.xs },
   sessionHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md },
   sessionName: { fontSize: Typography.sizes.base, fontWeight: Typography.weights.bold, color: Colors.textPrimary },

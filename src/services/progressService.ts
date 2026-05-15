@@ -1,6 +1,21 @@
 import { supabase } from '../lib/supabase';
 import { WeightLog, MeasurementLog, ProgressPhoto, MeasurementType, WeightUnit } from '../types';
 
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Extract the raw storage path from whatever value is stored in photo_url.
+ * Handles both legacy full URLs and bare paths.
+ *   "https://….supabase.co/storage/v1/object/…/progress-photos/userId/ts.jpg"
+ *   "userId/ts.jpg"
+ *   "https://….supabase.co/storage/v1/object/sign/progress-photos/userId/ts.jpg?token=…"
+ */
+function storagePath(raw: string): string {
+  if (!raw.startsWith('http')) return raw;
+  const match = raw.match(/\/progress-photos\/(.+?)(\?|$)/);
+  return match ? match[1] : raw;
+}
+
 export const progressService = {
   // ─── Weight ──────────────────────────────────────────────────────────────
 
@@ -90,31 +105,24 @@ export const progressService = {
     uri: string,
     notes?: string,
   ): Promise<ProgressPhoto> {
-    // expo-image-picker with allowsEditing:true always saves to a local file://
-    // URI, so we can fetch it as a Blob and pass straight to the Supabase SDK.
-    const fileName = `${userId}/${Date.now()}.jpg`;
+    // expo-image-picker with allowsEditing:true always produces a local file://
+    // URI, so fetch + blob is safe here.
+    const path = `${userId}/${Date.now()}.jpg`;
 
-    // 1. Turn the local URI into a Blob.
     const localResponse = await fetch(uri);
     const blob = await localResponse.blob();
 
-    // 2. Upload via the Supabase Storage SDK (handles auth headers automatically).
     const { error: uploadError } = await supabase.storage
       .from('progress-photos')
-      .upload(fileName, blob, { contentType: 'image/jpeg', upsert: false });
+      .upload(path, blob, { contentType: 'image/jpeg', upsert: false });
 
     if (uploadError) throw uploadError;
 
-    // 3. Build the public URL and save the DB row.
-    // ⚠️  The "progress-photos" bucket must be set to Public in Supabase Dashboard
-    //     (Storage → Buckets → progress-photos → Edit → Public).
-    const { data: urlData } = supabase.storage
-      .from('progress-photos')
-      .getPublicUrl(fileName);
-
+    // Store only the storage PATH (not a URL) so we can always generate fresh
+    // signed URLs on fetch — the bucket is private so public URLs don't work.
     const { data, error } = await supabase
       .from('progress_photos')
-      .insert({ user_id: userId, photo_url: urlData.publicUrl, notes })
+      .insert({ user_id: userId, photo_url: path, notes })
       .select()
       .single();
     if (error) throw error;
@@ -129,27 +137,31 @@ export const progressService = {
       .order('logged_at', { ascending: false });
     if (error) throw error;
 
-    // Handle legacy rows that stored only a relative path instead of a full URL.
-    return (data ?? []).map((p) => {
-      if (p.photo_url.startsWith('http')) return p;
-      const { data: pub } = supabase.storage
-        .from('progress-photos')
-        .getPublicUrl(p.photo_url);
-      return { ...p, photo_url: pub.publicUrl };
-    });
+    const photos = data ?? [];
+    if (photos.length === 0) return [];
+
+    // Extract storage paths (handles both bare paths and legacy full URLs).
+    const paths = photos.map((p) => storagePath(p.photo_url));
+
+    // Batch-generate signed URLs (1 hour TTL). The bucket is private so we use
+    // signed URLs instead of public URLs. The SELECT policy in storage.objects
+    // allows each user to sign their own objects.
+    const { data: signedData } = await supabase.storage
+      .from('progress-photos')
+      .createSignedUrls(paths, 3600);
+
+    return photos.map((p, i) => ({
+      ...p,
+      photo_url: signedData?.[i]?.signedUrl ?? p.photo_url,
+    }));
   },
 
   async deleteProgressPhoto(photoId: string, photoUrl: string): Promise<void> {
-    // Also remove from Storage so space is freed.
+    // Remove from Storage first so space is freed.
     try {
-      let path = photoUrl;
-      if (path.startsWith('http')) {
-        const match = path.match(/\/progress-photos\/(.+?)(\?|$)/);
-        if (match) path = match[1];
-      }
-      await supabase.storage.from('progress-photos').remove([path]);
+      await supabase.storage.from('progress-photos').remove([storagePath(photoUrl)]);
     } catch {
-      // Storage delete failure should not block the DB row delete.
+      // Storage delete failure must not block the DB row delete.
     }
     const { error } = await supabase
       .from('progress_photos')
