@@ -60,7 +60,10 @@ export function useCompleteSession() {
       notes?: string;
     }) => workoutService.completeSession(sessionId, duration, notes),
     onSuccess: () => {
+      // Invalidate everything the workout tab and progress tab depend on
+      // so the "✓ Completed" badge and session history update immediately.
       qc.invalidateQueries({ queryKey: ['recentSessions'] });
+      qc.invalidateQueries({ queryKey: ['workoutSessions'] });
     },
   });
 }

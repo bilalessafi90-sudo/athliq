@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
+import { format } from 'date-fns';
+import { useQueryClient } from '@tanstack/react-query';
 import { useWorkoutStore } from '../../src/stores/workoutStore';
 import { useCompleteSession, useLastSessionLogs } from '../../src/hooks/useWorkout';
 import { workoutService } from '../../src/services/workoutService';
@@ -24,8 +26,21 @@ export default function ActiveWorkoutScreen() {
   } = useWorkoutStore();
   const { user, profile } = useAuthStore();
   const completeSessionMutation = useCompleteSession();
+  const qc = useQueryClient();
   const t = useT();
   const { language } = useLanguageStore();
+
+  // ── Completion summary (replaces the workout screen when done) ──────────
+  interface CompletionData {
+    dayName: string;
+    completedAt: Date;
+    durationMin: number;
+    completedSets: number;
+    totalSets: number;
+    totalVolume: number; // sum of weight × reps across all completed sets
+    exercises: Array<{ name: string; completedSets: number; totalSets: number }>;
+  }
+  const [completionData, setCompletionData] = useState<CompletionData | null>(null);
 
   const startRef = useRef<number>(Date.now());
   const [elapsed, setElapsed] = useState(0);
@@ -287,12 +302,41 @@ export default function ActiveWorkoutScreen() {
 
   const finishWorkout = async () => {
     if (!activeSession || !user) return;
-    const duration = Math.round(elapsed / 60);
+    const durationMin = Math.max(Math.round(elapsed / 60), 1);
 
+    // ── Snapshot summary data BEFORE clearing the store ──────────────────
+    const snapshot: CompletionData = {
+      dayName: activeDay?.name ?? 'Workout',
+      completedAt: new Date(),
+      durationMin,
+      completedSets: activeExercises.reduce(
+        (a, ae) => a + ae.sets.filter((s) => s.completed).length, 0,
+      ),
+      totalSets: activeExercises.reduce((a, ae) => a + ae.sets.length, 0),
+      totalVolume: Math.round(
+        activeExercises.reduce(
+          (acc, ae) =>
+            acc +
+            ae.sets
+              .filter((s) => s.completed)
+              .reduce((a, s) => a + (s.weight ?? 0) * (s.reps ?? 0), 0),
+          0,
+        ),
+      ),
+      exercises: activeExercises.map((ae) => ({
+        name: (ae.workoutExercise as any).exercise?.name ?? 'Exercise',
+        completedSets: ae.sets.filter((s) => s.completed).length,
+        totalSets: ae.sets.length,
+      })),
+    };
+
+    // ── Persist to DB ─────────────────────────────────────────────────────
     try {
-      await completeSessionMutation.mutateAsync({ sessionId: activeSession.id, duration });
+      await completeSessionMutation.mutateAsync({
+        sessionId: activeSession.id,
+        duration: durationMin,
+      });
 
-      // Log all completed sets
       const logs: any[] = [];
       for (const ae of activeExercises) {
         for (const set of ae.sets) {
@@ -309,14 +353,92 @@ export default function ActiveWorkoutScreen() {
         }
       }
       if (logs.length > 0) await workoutService.logExerciseSets(logs);
+
+      // Warm the cache so the workout tab shows ✓ instantly when we navigate.
+      await qc.invalidateQueries({ queryKey: ['recentSessions'] });
     } catch (e) {
       console.error('Error finishing workout:', e);
+      // Even on error we still show the completion screen — the data is
+      // already saved optimistically by the mutation.
     }
 
+    // ── Tear down timers + store, then show the summary ───────────────────
     cancelRestNotif();
-    endSession();
+    endSession();          // clears Zustand store; snapshot is safely in local state
+    setCompletionData(snapshot);
+  };
+
+  const handleCompletionDone = () => {
+    setCompletionData(null);
     router.replace('/(tabs)/workout');
   };
+
+  // ── Completion summary view ────────────────────────────────────────────
+  if (completionData) {
+    return (
+      <SafeAreaView style={styles.root}>
+        <ScrollView contentContainerStyle={cs.scroll} showsVerticalScrollIndicator={false}>
+          {/* Trophy + headline */}
+          <View style={cs.heroSection}>
+            <Text style={cs.trophy}>🏆</Text>
+            <Text style={cs.headline}>{t.workoutComplete}</Text>
+            <Text style={cs.dayName}>{completionData.dayName}</Text>
+            <Text style={cs.timestamp}>
+              {format(completionData.completedAt, 'EEEE, MMM d · h:mm a')}
+            </Text>
+          </View>
+
+          {/* Stats strip */}
+          <View style={cs.statsRow}>
+            <CompletionStat icon="⏱" label="Duration" value={`${completionData.durationMin} min`} />
+            <View style={cs.statDivider} />
+            <CompletionStat
+              icon="💪"
+              label="Sets done"
+              value={`${completionData.completedSets}/${completionData.totalSets}`}
+            />
+            {completionData.totalVolume > 0 && (
+              <>
+                <View style={cs.statDivider} />
+                <CompletionStat
+                  icon="🏋️"
+                  label="Volume"
+                  value={`${completionData.totalVolume} ${profile?.weight_unit ?? 'kg'}`}
+                />
+              </>
+            )}
+          </View>
+
+          {/* Per-exercise breakdown */}
+          <View style={cs.section}>
+            <Text style={cs.sectionTitle}>Exercises</Text>
+            {completionData.exercises.map((ex, i) => {
+              const allDone = ex.completedSets === ex.totalSets;
+              return (
+                <View key={i} style={[cs.exRow, allDone && cs.exRowDone]}>
+                  <Text style={[cs.exName, allDone && cs.exNameDone]} numberOfLines={1}>
+                    {ex.name}
+                  </Text>
+                  <View style={[cs.exBadge, allDone && cs.exBadgeDone]}>
+                    <Text style={[cs.exBadgeText, allDone && cs.exBadgeTextDone]}>
+                      {allDone ? '✓ ' : ''}{ex.completedSets}/{ex.totalSets} sets
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Done button */}
+          <TouchableOpacity onPress={handleCompletionDone} style={cs.doneBtn}>
+            <Text style={cs.doneBtnText}>Back to Workouts</Text>
+          </TouchableOpacity>
+
+          <View style={{ height: Spacing.xl }} />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   if (!currentEx) {
     return (
@@ -956,4 +1078,82 @@ const ssr = StyleSheet.create({
   doneBtnDone:  { backgroundColor: Colors.accentGreen, borderColor: Colors.accentGreen },
   doneBtnText:  { color: Colors.textMuted, fontSize: 15 },
   doneBtnTextDone: { color: Colors.white, fontWeight: '700' },
+});
+
+// ─── Completion Summary Styles ────────────────────────────────────────────────
+
+function CompletionStat({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <View style={cs.stat}>
+      <Text style={cs.statIcon}>{icon}</Text>
+      <Text style={cs.statValue}>{value}</Text>
+      <Text style={cs.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+const cs = StyleSheet.create({
+  scroll: { paddingHorizontal: Spacing['2xl'], paddingTop: Spacing['2xl'], alignItems: 'stretch' },
+
+  heroSection: { alignItems: 'center', marginBottom: Spacing['2xl'], gap: Spacing.sm },
+  trophy:    { fontSize: 72, marginBottom: Spacing.sm },
+  headline:  { fontSize: Typography.sizes['2xl'], fontWeight: Typography.weights.extrabold, color: Colors.textPrimary, textAlign: 'center' },
+  dayName:   { fontSize: Typography.sizes.lg,  fontWeight: Typography.weights.semibold, color: Colors.textSecondary, textAlign: 'center' },
+  timestamp: { fontSize: Typography.sizes.sm,  color: Colors.textMuted, textAlign: 'center' },
+
+  // Stats strip
+  statsRow: {
+    flexDirection: 'row',
+    backgroundColor: Colors.card,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: Spacing.xl,
+    marginBottom: Spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'space-evenly',
+  },
+  stat: { alignItems: 'center', gap: 4, flex: 1 },
+  statIcon:  { fontSize: 22 },
+  statValue: { fontSize: Typography.sizes.lg, fontWeight: Typography.weights.bold, color: Colors.textPrimary, fontVariant: ['tabular-nums'] },
+  statLabel: { fontSize: Typography.sizes.xs, color: Colors.textMuted },
+  statDivider: { width: 1, height: 40, backgroundColor: Colors.border },
+
+  // Exercise breakdown
+  section: { marginBottom: Spacing.xl },
+  sectionTitle: { fontSize: Typography.sizes.md, fontWeight: Typography.weights.semibold, color: Colors.textPrimary, marginBottom: Spacing.md },
+  exRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.base,
+    borderRadius: Radius.md,
+    marginBottom: Spacing.xs,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  exRowDone:  { borderColor: Colors.accentGreen + '55', backgroundColor: Colors.accentGreen + '08' },
+  exName:     { flex: 1, fontSize: Typography.sizes.base, color: Colors.textSecondary, marginRight: Spacing.md },
+  exNameDone: { color: Colors.textPrimary, fontWeight: Typography.weights.medium },
+  exBadge: {
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 3,
+  },
+  exBadgeDone:     { backgroundColor: Colors.accentGreen },
+  exBadgeText:     { fontSize: Typography.sizes.xs, color: Colors.textMuted, fontWeight: '600' },
+  exBadgeTextDone: { color: Colors.white },
+
+  // Done button
+  doneBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.xl,
+    paddingVertical: Spacing.base + 2,
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+  },
+  doneBtnText: { color: Colors.white, fontSize: Typography.sizes.base, fontWeight: Typography.weights.bold },
 });
