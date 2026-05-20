@@ -54,12 +54,13 @@ export default function ActiveWorkoutScreen() {
   // Status drives button label; remaining drives the display.
   // Refs are used inside the interval closure to avoid stale state.
   const [exTimerStatus, setExTimerStatus] = useState<'idle' | 'running' | 'paused'>('idle');
-  const [exTimerRemaining, setExTimerRemaining] = useState(0);
+  const [exTimerElapsed, setExTimerElapsed] = useState(0);  // count-up seconds
   const [exTimerSetIdx, setExTimerSetIdx] = useState(0);
-  const exTimerStatusRef = useRef<'idle' | 'running' | 'paused'>('idle');
-  const exTimerEndRef    = useRef<number | null>(null);   // absolute end ms when running
-  const exTimerTargetRef = useRef(0);                     // total seconds for this exercise
-  const exTimerRemainingRef = useRef(0);                  // updated every tick
+  const exTimerStatusRef   = useRef<'idle' | 'running' | 'paused'>('idle');
+  const exTimerSegStartRef = useRef<number | null>(null);   // when current segment started (ms)
+  const exTimerAccumRef    = useRef(0);                     // seconds accumulated before this segment
+  const exTimerElapsedRef  = useRef(0);                     // total elapsed seconds (updated every tick)
+  const exTimerTargetRef   = useRef(0);                     // target seconds (reference only, no ceiling)
 
   const currentEx = activeExercises[currentExerciseIndex];
   const we = currentEx?.workoutExercise;
@@ -147,14 +148,13 @@ export default function ActiveWorkoutScreen() {
         }
       }
 
-      // Exercise countdown (only ticks when running)
-      if (exTimerStatusRef.current === 'running' && exTimerEndRef.current !== null) {
-        const rem = Math.max(0, Math.round((exTimerEndRef.current - Date.now()) / 1000));
-        if (rem !== exTimerRemainingRef.current) {
-          exTimerRemainingRef.current = rem;
-          setExTimerRemaining(rem);
+      // Exercise count-up (only ticks when running)
+      if (exTimerStatusRef.current === 'running' && exTimerSegStartRef.current !== null) {
+        const elapsed = exTimerAccumRef.current + Math.round((Date.now() - exTimerSegStartRef.current) / 1000);
+        if (elapsed !== exTimerElapsedRef.current) {
+          exTimerElapsedRef.current = elapsed;
+          setExTimerElapsed(elapsed);
         }
-        // Auto-complete hook point — wired up in Step 2
       }
     }, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
@@ -163,12 +163,13 @@ export default function ActiveWorkoutScreen() {
   // ── Reset exercise timer whenever the active exercise changes ──────────
   useEffect(() => {
     const target = Math.max(parseTargetDefault(we?.reps ?? ''), 5);
-    exTimerTargetRef.current    = target;
-    exTimerRemainingRef.current = target;
-    exTimerEndRef.current       = null;
-    exTimerStatusRef.current    = 'idle';
+    exTimerTargetRef.current   = target;
+    exTimerSegStartRef.current = null;
+    exTimerAccumRef.current    = 0;
+    exTimerElapsedRef.current  = 0;
+    exTimerStatusRef.current   = 'idle';
     setExTimerStatus('idle');
-    setExTimerRemaining(target);
+    setExTimerElapsed(0);
     // Start from the first incomplete set
     const idx = (activeExercises[currentExerciseIndex]?.sets ?? [])
       .findIndex((s) => !s.completed);
@@ -208,29 +209,27 @@ export default function ActiveWorkoutScreen() {
 
   // ── Exercise timer handlers ─────────────────────────────────────────────
   const handleStartExTimer = () => {
-    // If we've reached 0, restart from full target
-    if (exTimerRemainingRef.current <= 0) {
-      exTimerRemainingRef.current = exTimerTargetRef.current;
-      setExTimerRemaining(exTimerTargetRef.current);
-    }
-    exTimerEndRef.current    = Date.now() + exTimerRemainingRef.current * 1000;
-    exTimerStatusRef.current = 'running';
+    // Segment starts now; accumulated time from before is in exTimerAccumRef
+    exTimerSegStartRef.current = Date.now();
+    exTimerStatusRef.current   = 'running';
     setExTimerStatus('running');
   };
 
   const handlePauseExTimer = () => {
-    exTimerEndRef.current    = null;
-    exTimerStatusRef.current = 'paused';
+    // Freeze the accumulated total so Resume continues from here
+    exTimerAccumRef.current    = exTimerElapsedRef.current;
+    exTimerSegStartRef.current = null;
+    exTimerStatusRef.current   = 'paused';
     setExTimerStatus('paused');
-    // exTimerRemainingRef already holds the correct value from the last tick
   };
 
   const handleResetExTimer = () => {
-    exTimerEndRef.current       = null;
-    exTimerStatusRef.current    = 'idle';
-    exTimerRemainingRef.current = exTimerTargetRef.current;
+    exTimerSegStartRef.current = null;
+    exTimerAccumRef.current    = 0;
+    exTimerElapsedRef.current  = 0;
+    exTimerStatusRef.current   = 'idle';
     setExTimerStatus('idle');
-    setExTimerRemaining(exTimerTargetRef.current);
+    setExTimerElapsed(0);
   };
 
   // Advance the active-set pointer to the next incomplete set after one finishes.
@@ -252,13 +251,17 @@ export default function ActiveWorkoutScreen() {
       return;
     }
 
-    // For time-based: auto-fill duration from the timer so the user never has
-    // to type seconds manually. We use elapsed time (target − remaining); fall
-    // back to the full target if the timer was never started.
-    if (isTimeBased && (set.reps == null || set.reps === 0)) {
-      const elapsed = exTimerTargetRef.current - exTimerRemainingRef.current;
-      const duration = elapsed > 0 ? elapsed : exTimerTargetRef.current;
-      updateSet(currentExerciseIndex, setIdx, 'reps', duration);
+    // For time-based: record actual elapsed time from the count-up timer.
+    // If the timer was never started (elapsed = 0), fall back to any manually
+    // entered value, or the target default.
+    if (isTimeBased) {
+      const timerElapsed = exTimerElapsedRef.current;
+      if (timerElapsed > 0) {
+        updateSet(currentExerciseIndex, setIdx, 'reps', timerElapsed);
+      } else if (set.reps == null || set.reps === 0) {
+        updateSet(currentExerciseIndex, setIdx, 'reps', exTimerTargetRef.current);
+      }
+      // If timer unused but user already typed a value, keep it as-is
     }
 
     // For reps-based: still require a value.
@@ -525,7 +528,7 @@ export default function ActiveWorkoutScreen() {
         {isTimeBased ? (
           <>
             <ExerciseTimerPanel
-              remaining={exTimerRemaining}
+              elapsed={exTimerElapsed}
               target={exTimerTargetRef.current}
               status={exTimerStatus}
               setIdx={exTimerSetIdx}
@@ -539,6 +542,7 @@ export default function ActiveWorkoutScreen() {
               activeSetIdx={exTimerSetIdx}
               unit={profile?.weight_unit ?? 'kg'}
               onWeightChange={(i, v) => updateSet(currentExerciseIndex, i, 'weight', parseFloat(v) || 0)}
+              onDurationChange={(i, v) => updateSet(currentExerciseIndex, i, 'reps', parseInt(v) || 0)}
               onToggle={(i) => handleToggleSet(i)}
             />
           </>
@@ -709,7 +713,7 @@ function SetRow({
 // ─── Exercise Timer Panel ─────────────────────────────────────────────────────
 
 interface ExerciseTimerPanelProps {
-  remaining: number;
+  elapsed: number;
   target: number;
   status: 'idle' | 'running' | 'paused';
   setIdx: number;
@@ -720,15 +724,16 @@ interface ExerciseTimerPanelProps {
 }
 
 function ExerciseTimerPanel({
-  remaining, target, status, setIdx, totalSets, onStart, onPause, onReset,
+  elapsed, target, status, setIdx, totalSets, onStart, onPause, onReset,
 }: ExerciseTimerPanelProps) {
-  const progress  = target > 0 ? 1 - remaining / target : 0;
-  const isUrgent  = status === 'running' && remaining <= 10 && remaining > 0;
-  const mm = Math.floor(remaining / 60).toString().padStart(2, '0');
-  const ss = (remaining % 60).toString().padStart(2, '0');
+  // Progress fills toward target; stays at 100% once exceeded
+  const progress = target > 0 ? Math.min(elapsed / target, 1) : 0;
+  const exceeded = target > 0 && elapsed > target;
+  const mm = Math.floor(elapsed / 60).toString().padStart(2, '0');
+  const ss = (elapsed % 60).toString().padStart(2, '0');
 
   return (
-    <View style={[tp.card, isUrgent && tp.cardUrgent]}>
+    <View style={[tp.card, exceeded && tp.cardExceeded]}>
       {/* Set indicator */}
       <View style={tp.topRow}>
         <Text style={tp.setLabel}>Set {setIdx + 1} of {totalSets}</Text>
@@ -739,22 +744,24 @@ function ExerciseTimerPanel({
         </View>
       </View>
 
-      {/* Big countdown */}
-      <Text style={[tp.countdown, isUrgent && tp.countdownUrgent]}>
+      {/* Big count-up timer */}
+      <Text style={[tp.countdown, exceeded && tp.countdownExceeded]}>
         {mm}:{ss}
       </Text>
 
-      {/* Shrinking progress bar */}
+      {/* Filling progress bar — turns green when target exceeded */}
       <View style={tp.barWrap}>
         <ProgressBar
           progress={progress}
-          color={isUrgent ? Colors.error : Colors.primary}
+          color={exceeded ? Colors.accentGreen : Colors.primary}
           height={8}
           animated
         />
       </View>
-      <Text style={tp.targetLabel}>
-        Target: {formatSetValue(target, 'time')}
+      <Text style={[tp.targetLabel, exceeded && tp.targetLabelExceeded]}>
+        {exceeded
+          ? `+${formatSetValue(elapsed - target, 'time')} past target`
+          : `Target: ${formatSetValue(target, 'time')}`}
       </Text>
 
       {/* Controls */}
@@ -782,10 +789,11 @@ interface SetStatusRowsProps {
   activeSetIdx: number;
   unit: string;
   onWeightChange: (setIdx: number, v: string) => void;
+  onDurationChange: (setIdx: number, v: string) => void;
   onToggle: (setIdx: number) => void;
 }
 
-function SetStatusRows({ sets, activeSetIdx, unit, onWeightChange, onToggle }: SetStatusRowsProps) {
+function SetStatusRows({ sets, activeSetIdx, unit, onWeightChange, onDurationChange, onToggle }: SetStatusRowsProps) {
   return (
     <View style={ssr.container}>
       {sets.map((set, i) => (
@@ -812,10 +820,20 @@ function SetStatusRows({ sets, activeSetIdx, unit, onWeightChange, onToggle }: S
             />
           </View>
 
-          {/* Duration logged (when done) or status indicator */}
+          {/* Duration: editable when done, status label when pending */}
           <View style={ssr.durationWrap}>
-            {set.completed && set.reps != null ? (
-              <Text style={ssr.durationDone}>{formatSetValue(set.reps, 'time')}</Text>
+            {set.completed ? (
+              <View style={ssr.durationEditRow}>
+                <TextInput
+                  style={ssr.durationInput}
+                  value={set.reps != null ? String(set.reps) : ''}
+                  onChangeText={(v) => onDurationChange(i, v)}
+                  keyboardType="number-pad"
+                  placeholderTextColor={Colors.textMuted}
+                  placeholder="0"
+                />
+                <Text style={ssr.durationUnit}>s</Text>
+              </View>
             ) : (
               <Text style={[ssr.statusText, i === activeSetIdx && ssr.statusTextActive]}>
                 {i === activeSetIdx ? 'Active' : '—'}
@@ -985,9 +1003,9 @@ const tp = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.md,
   },
-  cardUrgent: {
-    borderColor: Colors.error + '88',
-    backgroundColor: Colors.error + '08',
+  cardExceeded: {
+    borderColor: Colors.accentGreen + '88',
+    backgroundColor: Colors.accentGreen + '06',
   },
 
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' },
@@ -1004,10 +1022,11 @@ const tp = StyleSheet.create({
     letterSpacing: -2,
     lineHeight: 80,
   },
-  countdownUrgent: { color: Colors.error },
+  countdownExceeded: { color: Colors.accentGreen },
 
   barWrap: { width: '100%' },
   targetLabel: { fontSize: Typography.sizes.xs, color: Colors.textMuted },
+  targetLabelExceeded: { color: Colors.accentGreen, fontWeight: Typography.weights.semibold },
 
   controls: { flexDirection: 'row', gap: Spacing.md, width: '100%', marginTop: Spacing.sm },
   resetBtn: {
@@ -1070,7 +1089,24 @@ const ssr = StyleSheet.create({
   weightInputDone: { color: Colors.accentGreen, backgroundColor: Colors.accentGreen + '15' },
 
   durationWrap:  { flex: 1, alignItems: 'center' },
-  durationDone:  { fontSize: Typography.sizes.base, fontWeight: Typography.weights.bold, color: Colors.accentGreen, fontVariant: ['tabular-nums'] },
+  durationEditRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  durationInput: {
+    fontSize: Typography.sizes.base,
+    fontWeight: Typography.weights.bold,
+    color: Colors.accentGreen,
+    fontVariant: ['tabular-nums'],
+    textAlign: 'center',
+    backgroundColor: Colors.accentGreen + '15',
+    borderRadius: Radius.sm,
+    paddingVertical: 2,
+    paddingHorizontal: Spacing.sm,
+    minWidth: 44,
+  },
+  durationUnit: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.accentGreen,
+    fontWeight: Typography.weights.semibold,
+  },
   statusText:    { fontSize: Typography.sizes.sm, color: Colors.textMuted },
   statusTextActive: { color: Colors.primary, fontWeight: Typography.weights.semibold },
 
