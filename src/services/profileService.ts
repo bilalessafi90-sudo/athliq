@@ -47,7 +47,7 @@ export const profileService = {
   },
 
   async uploadAvatar(userId: string, uri: string): Promise<string> {
-    const ext = uri.split('.').pop() ?? 'jpg';
+    const ext = uri.split('.').pop()?.toLowerCase().replace('jpeg', 'jpg') ?? 'jpg';
     const fileName = `${userId}/avatar.${ext}`;
     const response = await fetch(uri);
     const blob = await response.blob();
@@ -55,7 +55,24 @@ export const profileService = {
       .from('avatars')
       .upload(fileName, blob, { upsert: true, contentType: `image/${ext}` });
     if (uploadError) throw uploadError;
-    const { data } = supabase.storage.from('avatars').getPublicUrl(fileName);
-    return data.publicUrl;
+    // Store the raw storage path (not a full URL) so we can always generate
+    // a fresh signed URL for display — works even if the bucket isn't public.
+    return fileName;
+  },
+
+  /**
+   * Returns a short-lived signed URL for displaying an avatar.
+   * Accepts either a raw path ("userId/avatar.jpg") or a legacy full URL.
+   */
+  async getAvatarSignedUrl(avatarValue: string): Promise<string | null> {
+    if (!avatarValue) return null;
+    // Extract raw path from full URL (legacy format)
+    let path = avatarValue;
+    if (avatarValue.startsWith('http')) {
+      const match = avatarValue.match(/\/avatars\/(.+?)(\?|$)/);
+      path = match ? match[1] : avatarValue;
+    }
+    const { data } = await supabase.storage.from('avatars').createSignedUrl(path, 3600);
+    return data?.signedUrl ?? null;
   },
 };

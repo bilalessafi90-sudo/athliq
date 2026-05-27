@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/stores/authStore';
 import { useUpdateProfile } from '../../src/hooks/useProfile';
@@ -30,6 +31,16 @@ export default function ProfileScreen() {
   const [notifWorkout, setNotifWorkout] = useState(true);
   const [notifMeal, setNotifMeal] = useState(true);
   const [notifProgress, setNotifProgress] = useState(true);
+
+  // Generate a signed URL for the avatar — works regardless of bucket visibility.
+  // Query key includes avatar_url so it auto-refreshes after each upload.
+  const { data: avatarSignedUrl } = useQuery({
+    queryKey: ['avatarSigned', profile?.avatar_url],
+    queryFn: () => profileService.getAvatarSignedUrl(profile!.avatar_url!),
+    enabled: !!profile?.avatar_url,
+    staleTime: 55 * 60 * 1000,  // re-fetch after 55 min (signed URL lives 60 min)
+    gcTime: 60 * 60 * 1000,
+  });
 
   const goalInfo = FITNESS_GOALS.find((g) => g.id === profile?.fitness_goal);
   const expInfo = EXPERIENCE_LEVELS.find((e) => e.id === profile?.experience_level);
@@ -109,8 +120,8 @@ export default function ProfileScreen() {
         {/* ── Avatar & Name ──────────────────────────────────────── */}
         <View style={styles.avatarSection}>
           <TouchableOpacity onPress={handleAvatarPick} style={styles.avatarWrap}>
-            {profile?.avatar_url ? (
-              <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+            {avatarSignedUrl ? (
+              <Image source={{ uri: avatarSignedUrl }} style={styles.avatar} />
             ) : (
               <View style={styles.avatarPlaceholder}>
                 <Text style={styles.avatarInitial}>

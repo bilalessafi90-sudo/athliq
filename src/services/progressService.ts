@@ -138,20 +138,20 @@ export const progressService = {
       .eq('user_id', userId)
       .order('logged_at', { ascending: false });
     if (error) throw error;
+    if (!data?.length) return [];
 
-    // Normalise all rows to a guaranteed-working public URL.
-    // Handles: bare path, old full URL, or signed URL (all converted via storagePath).
-    return (data ?? []).map((p) => {
-      const path = storagePath(p.photo_url);
-      // If already a clean public URL, keep it; otherwise rebuild from path.
-      const isPublicUrl =
-        p.photo_url.includes('/object/public/') && !p.photo_url.includes('?');
-      if (isPublicUrl) return p;
-      const { data: pub } = supabase.storage
-        .from('progress-photos')
-        .getPublicUrl(path);
-      return { ...p, photo_url: pub.publicUrl };
-    });
+    // Use signed URLs for display — these work regardless of whether the bucket
+    // is configured as public or private in the Supabase dashboard.
+    // A single batch call avoids N round-trips.
+    const paths = data.map((p) => storagePath(p.photo_url));
+    const { data: signedData } = await supabase.storage
+      .from('progress-photos')
+      .createSignedUrls(paths, 7200); // 2-hour TTL; React Query refreshes every 5 min
+
+    return data.map((p, i) => ({
+      ...p,
+      photo_url: signedData?.[i]?.signedUrl ?? p.photo_url,
+    }));
   },
 
   async deleteProgressPhoto(photoId: string, photoUrl: string): Promise<void> {
