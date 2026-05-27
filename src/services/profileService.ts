@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from '../lib/supabase';
 import { Profile, OnboardingData } from '../types';
 
@@ -47,16 +48,29 @@ export const profileService = {
   },
 
   async uploadAvatar(userId: string, uri: string): Promise<string> {
-    const ext = uri.split('.').pop()?.toLowerCase().replace('jpeg', 'jpg') ?? 'jpg';
-    const fileName = `${userId}/avatar.${ext}`;
-    const response = await fetch(uri);
-    const blob = await response.blob();
+    // Include a timestamp in the filename so each upload is always a new
+    // INSERT (no upsert/UPDATE needed — avoids RLS policy violations when
+    // replacing an existing avatar).
+    const fileName = `${userId}/avatar_${Date.now()}.jpg`;
+
+    // Read as base64 via expo-file-system — works for HEIC/HEIF and all other
+    // iOS/Android formats that fetch().blob() can silently fail on.
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const binaryStr = atob(base64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+
     const { error: uploadError } = await supabase.storage
       .from('avatars')
-      .upload(fileName, blob, { upsert: true, contentType: `image/${ext}` });
+      .upload(fileName, bytes, { upsert: false, contentType: 'image/jpeg' });
     if (uploadError) throw uploadError;
-    // Store the raw storage path (not a full URL) so we can always generate
-    // a fresh signed URL for display — works even if the bucket isn't public.
+
+    // Return the raw storage path — getAvatarSignedUrl turns it into a
+    // signed URL for display so it works regardless of bucket visibility.
     return fileName;
   },
 

@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from '../lib/supabase';
 import { WeightLog, MeasurementLog, ProgressPhoto, MeasurementType, WeightUnit } from '../types';
 
@@ -107,24 +108,27 @@ export const progressService = {
   ): Promise<ProgressPhoto> {
     const path = `${userId}/${Date.now()}.jpg`;
 
-    const localResponse = await fetch(uri);
-    const blob = await localResponse.blob();
+    // Read file as base64 via expo-file-system — reliable across all iOS/Android
+    // image formats (HEIC, HEIF, etc.) unlike fetch().blob() which can fail.
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const binaryStr = atob(base64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
 
     const { error: uploadError } = await supabase.storage
       .from('progress-photos')
-      .upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+      .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
 
     if (uploadError) throw uploadError;
 
-    // Store the public URL. The bucket is set to public so this URL is
-    // directly loadable by React Native's Image component without auth.
-    const { data: urlData } = supabase.storage
-      .from('progress-photos')
-      .getPublicUrl(path);
-
+    // Store the raw path — getProgressPhotos converts it to a signed URL for display.
     const { data, error } = await supabase
       .from('progress_photos')
-      .insert({ user_id: userId, photo_url: urlData.publicUrl, notes })
+      .insert({ user_id: userId, photo_url: path, notes })
       .select()
       .single();
     if (error) throw error;
