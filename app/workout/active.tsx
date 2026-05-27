@@ -305,9 +305,11 @@ export default function ActiveWorkoutScreen() {
 
   const finishWorkout = async () => {
     if (!activeSession || !user) return;
-    const durationMin = Math.max(Math.round(elapsed / 60), 1);
 
-    // ── Snapshot summary data BEFORE clearing the store ──────────────────
+    const durationMin = Math.max(Math.round(elapsed / 60), 1);
+    const sessionId   = activeSession.id;  // capture before store is cleared
+
+    // ── Snapshot everything we need BEFORE clearing the store ────────────
     const snapshot: CompletionData = {
       dayName: activeDay?.name ?? 'Workout',
       completedAt: new Date(),
@@ -333,42 +335,40 @@ export default function ActiveWorkoutScreen() {
       })),
     };
 
-    // ── Persist to DB ─────────────────────────────────────────────────────
-    try {
-      await completeSessionMutation.mutateAsync({
-        sessionId: activeSession.id,
-        duration: durationMin,
-      });
-
-      const logs: any[] = [];
-      for (const ae of activeExercises) {
-        for (const set of ae.sets) {
-          if (set.completed && set.reps != null) {
-            logs.push({
-              session_id: activeSession.id,
-              exercise_id: ae.workoutExercise.exercise_id,
-              set_number: set.setNumber,
-              reps: set.reps,
-              weight: set.weight ?? 0,
-              unit: profile?.weight_unit ?? 'kg',
-            });
-          }
+    // Capture exercise logs into a local array before the store is cleared
+    const logsToSave: any[] = [];
+    for (const ae of activeExercises) {
+      for (const set of ae.sets) {
+        if (set.completed && set.reps != null) {
+          logsToSave.push({
+            session_id: sessionId,
+            exercise_id: ae.workoutExercise.exercise_id,
+            set_number: set.setNumber,
+            reps: set.reps,
+            weight: set.weight ?? 0,
+            unit: profile?.weight_unit ?? 'kg',
+          });
         }
       }
-      if (logs.length > 0) await workoutService.logExerciseSets(logs);
-
-      // Warm the cache so the workout tab shows ✓ instantly when we navigate.
-      await qc.invalidateQueries({ queryKey: ['recentSessions'] });
-    } catch (e) {
-      console.error('Error finishing workout:', e);
-      // Even on error we still show the completion screen — the data is
-      // already saved optimistically by the mutation.
     }
 
-    // ── Tear down timers + store, then show the summary ───────────────────
+    // ── Show the completion screen IMMEDIATELY ────────────────────────────
+    // Doing this before the DB call means the button always responds, even
+    // after long sessions where the Supabase connection needs to re-auth.
     cancelRestNotif();
-    endSession();          // clears Zustand store; snapshot is safely in local state
+    endSession();           // clears Zustand store; all data is in local vars
     setCompletionData(snapshot);
+
+    // ── Persist to DB in the background (non-blocking for UX) ────────────
+    try {
+      await completeSessionMutation.mutateAsync({ sessionId, duration: durationMin });
+      if (logsToSave.length > 0) await workoutService.logExerciseSets(logsToSave);
+      // Warm the cache so the workout tab shows ✓ when the user navigates back
+      await qc.invalidateQueries({ queryKey: ['recentSessions'] });
+    } catch (e) {
+      console.error('Error saving workout to DB:', e);
+      // Completion screen is already showing — user experience is unaffected
+    }
   };
 
   const handleCompletionDone = () => {
