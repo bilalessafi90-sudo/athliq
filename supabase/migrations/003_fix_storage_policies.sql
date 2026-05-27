@@ -8,16 +8,17 @@
 -- Run this once in your Supabase Dashboard → SQL Editor.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE POLICY IF NOT EXISTS "Users update own avatar"
+DROP POLICY IF EXISTS "Users update own avatar" ON storage.objects;
+CREATE POLICY "Users update own avatar"
   ON storage.objects FOR UPDATE
   USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
 
-CREATE POLICY IF NOT EXISTS "Users delete own avatar"
+DROP POLICY IF EXISTS "Users delete own avatar" ON storage.objects;
+CREATE POLICY "Users delete own avatar"
   ON storage.objects FOR DELETE
   USING (bucket_id = 'avatars' AND auth.uid()::text = (storage.foldername(name))[1]);
 
--- Also add UPDATE for progress-photos (defensive, not strictly needed for
--- current upload logic but prevents future surprises).
-CREATE POLICY IF NOT EXISTS "Users update own progress photos"
+DROP POLICY IF EXISTS "Users update own progress photos" ON storage.objects;
+CREATE POLICY "Users update own progress photos"
   ON storage.objects FOR UPDATE
   USING (bucket_id = 'progress-photos' AND auth.uid()::text = (storage.foldername(name))[1]);
